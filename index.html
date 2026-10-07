@@ -5,13 +5,12 @@
 <style>
 html,body{margin:0;height:100%;overflow:hidden;background:#0d0d12;color:#eee;font-family:sans-serif;user-select:none}
 body{display:flex;flex-direction:column}
-#hud,#foot{display:flex;justify-content:space-between;padding:0.6vh 2vw;font-size:clamp(18px,3.4vh,44px);font-weight:bold;font-variant-numeric:tabular-nums;letter-spacing:0.05em}
+#hud{position:absolute;z-index:1;pointer-events:none;top:0;left:0;box-sizing:border-box;display:flex;justify-content:space-between;align-items:center;padding:0.6vh 0.4em;gap:1.5em;white-space:nowrap;font-size:clamp(12px,min(3.4vh,1.9vw),44px);font-weight:bold;font-variant-numeric:tabular-nums;letter-spacing:0.05em}
 #hud span:first-child{color:#ffa31a}
-canvas{flex:1;width:100%;min-height:0;display:block}
+canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 </style></head><body>
 <div id="hud"><span id="sc">SCORE 0</span><span id="hs">HI SCORE 0</span><span id="ln">ALERT</span></div>
 <canvas id="c"></canvas>
-<div id="foot">&nbsp;</div>
 <script>
 // ---- 定数 ----
 const TH=[8,20,36,56,80];           // 拡張する長さ（間隔を徐々に広げて密度をゆるやかに上げる）
@@ -45,6 +44,7 @@ const HOLES=[[2,4],[2,5],[2,6],[3,4],[3,5],[3,6]],HOLE_SAFE=2;
 const FENCE_PERIOD=0.8,FENCE_GLOW=5;   // FENCE_GLOW：柵のまわりのぼんやりした光の広がり
    // 電気柵の揺らぎ：この秒数かけて次の形へゆっくり変わる
 const SHAKE_KILL=1.5,SHAKE_BOMB=6;   // 画面揺れ：敵を倒したとき／爆弾が爆発したとき（後半は数が多いので控えめ）
+const SLOW_RATE=0.25,SLOW_DUR=1.2;   // やられたときのスローモーション：時間の速さ／自機がやられてから元に戻るまでの秒数（連鎖爆発中もずっとスロー）
 const WAVE_SPD=40;                  // 拾ったときの光の波が体を流れる速さ（機/秒）
 const BOMB_INT=10,BOMB_FUSE=5,BOMB_WARN=1.5; // 爆弾：10秒ごとに出現／5秒で爆発／最後の1.5秒は赤い予告エリア
 const BOMB_R=2,BOMB_R_WAVE=1;        // 爆発範囲：最初は中心から2マス（5×5）。ウェーブ（エリア拡大）ごとに1マス広がる（出現時に決まる）
@@ -98,7 +98,7 @@ function bgmUpdate(){
   if(play&&!bgmOn){if(bgmWasOver)bgm.currentTime=0;bgm.play().catch(()=>{});bgmOn=true;bgmWasOver=false}   // ファイルが無いときは無音のまま
   else if(!play&&bgmOn){bgm.pause();bgmOn=false;if(over||title)bgmWasOver=true}
 }
-let lastPop=0;
+let lastPop=0,slowT=0,wasOver=false,rdt=0;
 const SE={
   shot:()=>tone(1400,0.03,'square',0.025,900),                                   // 発射
   spshot:()=>tone(2200,0.06,'sine',0.05,1500),                                   // 水色の追従機の発射
@@ -123,7 +123,7 @@ function damage(e,d,hx,hy){
   else{SE.hit();for(let i=0;i<3;i++){const a=Math.random()*6.28;sparks.push({x:hx,y:hy,vx:Math.cos(a)*2,vy:Math.sin(a)*2,life:0.15})}}
 }
 function burst(x,y){for(let i=0;i<10;i++){const a=Math.random()*6.28,v=2+Math.random()*3;sparks.push({x,y,vx:Math.cos(a)*v,vy:Math.sin(a)*v,life:0.35})}}
-function reset(){p={x:13,y:12,dx:0,dy:-1};trail=[];n=0;score=0;newHi=false;enemies=[];cands=[];bullets=[];sparks=[];spawnT=0;fireT=0;shotN=0;turT=[];pulseT=0;pulses=[];over=false;overT=0;k=0;B=bounds(0);view={...B};exp=null;bombs=[];bombT=BOMB_INT;bombQ=[];blasts=[];why='';chain=null;pDead=false;gone=new Set();hold=null;placeHoles();got=0;kind=[];rockets=[];slide=null;paused=false;flash=0;hitStop=0;shake=0;waves=[];pops=[];streak=0;lastPick=-9}
+function reset(){p={x:13,y:12,dx:0,dy:-1};trail=[];n=0;score=0;newHi=false;enemies=[];cands=[];bullets=[];sparks=[];spawnT=0;fireT=0;shotN=0;turT=[];pulseT=0;pulses=[];over=false;overT=0;slowT=0;wasOver=false;k=0;B=bounds(0);view={...B};exp=null;bombs=[];bombT=BOMB_INT;bombQ=[];blasts=[];why='';chain=null;pDead=false;gone=new Set();hold=null;placeHoles();got=0;kind=[];rockets=[];slide=null;paused=false;flash=0;hitStop=0;shake=0;waves=[];pops=[];streak=0;lastPick=-9}
 reset();
 
 const fpos=i=>trail[i]||null;
@@ -211,7 +211,7 @@ function step(dt){
   sparks.forEach(s=>{s.x+=s.vx*dt;s.y+=s.vy*dt;s.life-=dt});sparks=sparks.filter(s=>s.life>0);
   blasts.forEach(b=>b.life-=dt);blasts=blasts.filter(b=>b.life>0);
   holeT=Math.min(1,holeT+dt/0.6);
-  flash=Math.max(0,flash-dt/0.45);   // 自機がやられたときの画面フラッシュ（0.45秒で消える）
+  flash=Math.max(0,flash-rdt/0.45);   // 自機がやられたときの画面フラッシュ（0.45秒で消える）
   if(!paused){   // 打ち上げ演出はエリア拡大の一時停止中も動く
     for(const r of rockets){if(r.delay>0){r.delay-=dt;continue}r.vy-=LAUNCH_ACC*dt;r.y+=r.vy*dt;if(Math.random()<0.6)sparks.push({x:r.x+(Math.random()-0.5)*0.3,y:r.y+0.5,vx:(Math.random()-0.5)*2,vy:3+Math.random()*3,life:0.3})}
     rockets=rockets.filter(r=>r.y>view.y0-3);
@@ -229,7 +229,7 @@ function step(dt){
     }
     return;
   }
-  if(over){overT+=dt;return}
+  if(over){if(slowT<=0)overT+=dt;return}
   if(exp){
     // 0.4秒停止 → 0.8秒かけて引く → 0.3秒停止 → 自動再開
     exp.t+=dt;
@@ -316,12 +316,16 @@ function sub(dt){
     return true});
 }
 
+const hudEl=document.getElementById('hud');
+function layout(cw,chh){const hh=hudEl.offsetHeight,S=Math.min(cw/view.w,(chh-hh)/view.h),vw=view.w*S,vh=view.h*S;return {S,hh,ox:(cw-vw)/2,oy:(chh-vh-hh)/2+hh}}
 function draw(){
   const cw=cv.clientWidth,chh=cv.clientHeight,W2=Math.round(cw*dpr),H2=Math.round(chh*dpr);
   if(cv.width!==W2||cv.height!==H2){cv.width=W2;cv.height=H2}
   g.setTransform(dpr,0,0,dpr,0,0);
   // 盤面を画面いっぱいに拡大して中央に置く
-  const S=Math.min(cw/view.w,chh/view.h),u=S/24,sk=shake*u,ox=(cw-view.w*S)/2+(Math.random()*2-1)*sk,oy=(chh-view.h*S)/2+(Math.random()*2-1)*sk;
+  // 上の表示（HUD）を盤面のすぐ上にくっつけ、HUD＋盤面のかたまりを画面の中央に置く
+  const L=layout(cw,chh),S=L.S,u=S/24,sk=shake*u,ox=L.ox+(Math.random()*2-1)*sk,oy=L.oy+(Math.random()*2-1)*sk;
+  {const st=hudEl.style,l=Math.round(L.ox)+'px',w=Math.round(view.w*S)+'px',t=Math.round(L.oy-L.hh)+'px';if(st.left!==l)st.left=l;if(st.width!==w)st.width=w;if(st.top!==t)st.top=t}
   const X=x=>ox+(x-view.x0)*S,Y=y=>oy+(y-view.y0)*S,vw=view.w*S,vh=view.h*S;
   const F=(px,b)=>(b?'bold ':'')+Math.round(px*chh/480)+'px sans-serif';
   g.fillStyle='#0d0d12';g.fillRect(0,0,cw,chh);
@@ -375,8 +379,8 @@ function draw(){
   bombs.forEach(bm=>{if(bm.done)return;g.fillStyle=bm.fl>0?'#ff4b4b':(Math.floor(bm.ph*2)%2?'#fff':'#ffd400');g.beginPath();g.arc(cx(bm.x),cy(bm.y),S*(0.2+0.16*bm.hp/BOMB_HP),0,6.283);g.fill()});   // 当たると赤く光り、残り耐久で小さくなる
   if(!pDead){g.fillStyle='#ffa31a';g.fillRect(X(p.x)+2*u,Y(p.y)+2*u,S-4*u,S-4*u);g.fillStyle='#222';g.fillRect(cx(p.x)-3*u+p.dx*8*u,cy(p.y)-3*u+p.dy*8*u,6*u,6*u)}
   // 得点ポップアップ
-  g.textAlign='center';g.font='bold '+Math.round(S*0.5)+'px sans-serif';
-  pops.forEach(q=>{const a=q.life/0.8;g.fillStyle='rgba(255,212,0,'+Math.min(1,a*1.5)+')';g.fillText('+'+(q.v||100),cx(q.x),cy(q.y)-(1-a)*S*1.2-S*0.4)});
+  g.textAlign='center';g.font='bold '+Math.round(Math.max(S*0.8,18))+'px sans-serif';
+  pops.forEach(q=>{const a=q.life/0.8;g.fillStyle='rgba(255,212,0,'+Math.min(1,a*1.5)+')';g.fillText('+'+(q.v||100),cx(q.x),cy(q.y)-(1-a)*S*1.4-S*0.6)});
   g.restore();
   if(flash>0){g.fillStyle='rgba(255,255,255,'+(flash*flash*0.9)+')';g.fillRect(0,0,cw,chh)}
   hSc.textContent='SCORE '+score;hHs.textContent='HI SCORE '+hi;{const a=alertLv();if(a!==hudAlert){hudAlert=a;hLn.innerHTML='ALERT <span style="color:#ff3b3b;letter-spacing:-0.1em">'+'▮'.repeat(Math.min(a,20))+'</span><span style="color:#552222;letter-spacing:-0.1em">'+'▮'.repeat(Math.max(0,20-a))+'</span>'+(a>20?' <span style="color:#ff3b3b">'+a+'</span>':'')}}   // 警戒レベル：赤いメモリが増えていく
@@ -390,14 +394,14 @@ function draw(){
     g.fillStyle='#999';g.font=F(11);g.fillText('矢印/WASD・ゲームパッドで1マス移動　Q/E・LB/RBで向きを回転　押しっぱなしで連続移動　弾は向いている方向へ自動発射　体と敵は通れない',mx,my+70*h);
     g.fillText('体に敵が当たる・動けなくなる・爆発に巻き込まれるとアウト',mx,my+88*h);
   }
-  if(over){
-    g.fillStyle='rgba(0,0,0,.6)';g.fillRect(0,my-60*h,cw,120*h);g.fillStyle='#fff';g.font=F(26,1);g.fillText('ゲームオーバー',mx,my-26*h);
-    if(why){g.font=F(13);g.fillStyle='#ffb0b0';g.fillText(why,mx,my-6*h);g.fillStyle='#fff'}
-    g.font=F(18);g.fillText('SCORE '+score+(newHi?'  NEW RECORD!':''),mx,my+18*h);
-    if(overT>0.6){g.font=F(14);g.fillText('キー操作 / ゲームパッドで再開',mx,my+40*h)}
+  if(over&&slowT<=0){
+    g.fillStyle='rgba(0,0,0,.65)';g.fillRect(0,my-115*h,cw,230*h);g.fillStyle='#fff';g.font=F(60,1);g.fillText('ゲームオーバー',mx,my-50*h);
+    if(why){g.font=F(22);g.fillStyle='#ffb0b0';g.fillText(why,mx,my-12*h);g.fillStyle='#fff'}
+    g.font=F(38,1);g.fillText('SCORE '+score+(newHi?'  NEW RECORD!':''),mx,my+38*h);
+    if(overT>0.6){g.font=F(20);g.fillText('キー操作 / ゲームパッドで再開',mx,my+82*h)}
   }
   // 音のオン／オフボタン：盤面の右下のマスのすぐ右（余白が足りなければ盤面の右下の角の内側）
-  {const S0=Math.min(cw/view.w,chh/view.h),bx0=(cw+view.w*S0)/2,by0=(chh+view.h*S0)/2,bs=Math.max(26,S0*0.9),gap=bs*0.25;
+  {const L0=layout(cw,chh),S0=L0.S,bx0=L0.ox+view.w*S0,by0=L0.oy+view.h*S0,bs=Math.max(26,S0*0.9),gap=bs*0.25;
    const bx=cw-bx0>=bs+gap*2?bx0+gap:bx0-bs-gap,by=by0-bs;muteBtn={x:bx,y:by,s:bs};
    g.fillStyle='rgba(255,255,255,0.08)';g.fillRect(bx,by,bs,bs);g.strokeStyle='#9be8e2';g.lineWidth=Math.max(1,bs/24);g.strokeRect(bx,by,bs,bs);
    const q=bs/24;g.fillStyle='#e6fffd';g.beginPath();g.moveTo(bx+5*q,by+9*q);g.lineTo(bx+9*q,by+9*q);g.lineTo(bx+14*q,by+4.5*q);g.lineTo(bx+14*q,by+19.5*q);g.lineTo(bx+9*q,by+15*q);g.lineTo(bx+5*q,by+15*q);g.closePath();g.fill();
@@ -436,5 +440,7 @@ function pollPad(){
     if(hk!==(pr.hold||'')){pr.hold=hk;if(hd){dir(...hd);hold={dx:hd[0],dy:hd[1],t:0,rep:0,key:'pad'+gp.index}}else if(hold&&hold.key==='pad'+gp.index)hold=null}
   }
 }
-(function loop(now){const dt=Math.min((now-last)/1000,0.05);last=now;pollPad();step(dt);bgmUpdate();draw();requestAnimationFrame(loop)})(last);
+(function loop(now){const dt=Math.min((now-last)/1000,0.05);last=now;pollPad();rdt=dt;
+  if(over&&!wasOver)slowT=SLOW_DUR;wasOver=over;   // やられた瞬間からスロー
+  const sc=(chain||slowT>0)?SLOW_RATE:1;if(slowT>0)slowT-=dt;step(dt*sc);bgmUpdate();draw();requestAnimationFrame(loop)})(last);
 </script></body></html>
