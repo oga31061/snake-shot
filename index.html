@@ -7,7 +7,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#0d0d12;color:#eee;fon
 body{display:flex;flex-direction:column}
 #hud{position:absolute;z-index:1;pointer-events:none;top:0;left:0;box-sizing:border-box;display:flex;justify-content:space-between;align-items:center;padding:0.6vh 0.4em;gap:1.5em;white-space:nowrap;font-size:clamp(12px,min(3.4vh,1.9vw),44px);font-weight:bold;font-variant-numeric:tabular-nums;letter-spacing:0.05em}
 #hud span:first-child{color:#ffa31a}
-canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+canvas{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;-webkit-touch-callout:none}
 </style></head><body>
 <div id="hud"><span id="sc">SCORE 0</span><span id="hs">HI SCORE 0</span><span id="ln">ALERT</span></div>
 <canvas id="c"></canvas>
@@ -67,7 +67,9 @@ const cell=()=>24*Math.min(W0/B.w,H0/B.h);
 const ring=e=>{const x=Math.round(e.x),y=Math.round(e.y);return x<=B.x0||x>=B.x0+B.w-1||y<=B.y0||y>=B.y0+B.h-1};
 const outside=(o,m)=>o.x<B.x0-m||o.x>B.x0+B.w-1+m||o.y<B.y0-m||o.y>B.y0+B.h-1+m;
 // ---- 効果音（Web Audioで合成。最初のキー入力で有効になる） ----
-let AC=null,master=null,noiseBuf=null,muted=false,muteBtn=null;
+let AC=null,master=null,noiseBuf=null,muted=false,muteBtn=null,pauseBtn=null,mobile=false,phoneBtn=null;
+try{mobile=localStorage.getItem('snakeshot_mobile')==='1'}catch(e){}
+function setMobile(m){mobile=m;try{localStorage.setItem('snakeshot_mobile',m?'1':'0')}catch(e){}}
 try{muted=localStorage.getItem('snakeshot_mute')==='1'}catch(e){}
 function setMute(m){muted=m;if(master)master.gain.value=m?0:0.35;if(typeof bgm!=='undefined')bgm.muted=m;try{localStorage.setItem('snakeshot_mute',m?'1':'0')}catch(e){}}
 function audioInit(){
@@ -390,11 +392,11 @@ function draw(){
   hSc.textContent='SCORE '+score;hHs.textContent='HI SCORE '+hi;{const a=alertLv();if(a!==hudAlert){hudAlert=a;hLn.innerHTML='ALERT <span style="color:#ff3b3b;letter-spacing:-0.1em">'+'▮'.repeat(Math.min(a,20))+'</span><span style="color:#552222;letter-spacing:-0.1em">'+'▮'.repeat(Math.max(0,20-a))+'</span>'+(a>20?' <span style="color:#ff3b3b">'+a+'</span>':'')}}   // 警戒レベル：赤いメモリが増えていく
   g.textAlign='center';const mx=cw/2,my=chh/2,h=chh/480;
   if(exp){g.fillStyle='rgba(0,0,0,.45)';g.fillRect(0,my-28*h,cw,56*h);g.fillStyle='#ffa31a';g.font=F(22,1);g.fillText('エリア拡大！',mx,my+(UP[k].label?-2:8)*h);if(UP[k].label){g.fillStyle='#5ee8ff';g.font=F(13,1);g.fillText(UP[k].label,mx,my+18*h)}}
-  if(paused){g.fillStyle='rgba(0,0,0,.55)';g.fillRect(0,0,cw,chh);g.fillStyle='#fff';g.font=F(40,1);g.fillText('PAUSE',mx,my);g.fillStyle='#aaa';g.font=F(13);g.fillText('ESC / スタートボタンで再開',mx,my+32*h)}
+  if(paused){g.fillStyle='rgba(0,0,0,.55)';g.fillRect(0,0,cw,chh);g.fillStyle='#fff';g.font=F(40,1);g.fillText('PAUSE',mx,my);g.fillStyle='#aaa';g.font=F(13);g.fillText(mobile?'ポーズボタンで再開':'ESC / スタートボタンで再開',mx,my+32*h)}
   if(title){
     g.fillStyle='rgba(0,0,0,.7)';g.fillRect(0,0,cw,chh);
     g.fillStyle='#ffa31a';g.font=F(64,1);g.fillText('SNAKE SHOT',mx,my-10*h);
-    g.fillStyle='#fff';g.font=F(16);g.fillText('キー操作 / ゲームパッドでスタート',mx,my+36*h);
+    g.fillStyle='#fff';g.font=F(16);g.fillText(mobile?'十字ボタンでスタート':'キー操作 / ゲームパッドでスタート',mx,my+36*h);
     g.fillStyle='#999';g.font=F(11);g.fillText('矢印/WASD・ゲームパッドで1マス移動　Q/E・LB/RBで向きを回転　押しっぱなしで連続移動　弾は向いている方向へ自動発射　体と敵は通れない',mx,my+70*h);
     g.fillText('体に敵が当たる・動けなくなる・爆発に巻き込まれるとアウト',mx,my+88*h);
   }
@@ -402,11 +404,22 @@ function draw(){
     g.fillStyle='rgba(0,0,0,.65)';g.fillRect(0,my-115*h,cw,230*h);g.fillStyle='#fff';g.font=F(60,1);g.fillText('ゲームオーバー',mx,my-50*h);
     if(why){g.font=F(22);g.fillStyle='#ffb0b0';g.fillText(why,mx,my-12*h);g.fillStyle='#fff'}
     g.font=F(38,1);g.fillText('SCORE '+score+(newHi?'  NEW RECORD!':''),mx,my+38*h);
-    if(overT>0.6){g.font=F(20);g.fillText('キー操作 / ゲームパッドで再開',mx,my+82*h)}
+    if(overT>0.6){g.font=F(20);g.fillText(mobile?'十字ボタンで再開':'キー操作 / ゲームパッドで再開',mx,my+82*h)}
   }
+  if(mobile)drawTouch(cw,chh);
+  // タイトル画面：スマホモード切り替えボタン（スマホのアイコン）
+  if(title){const bs=Math.round(46*h),bx=mx-bs/2,by=my+108*h;phoneBtn={x:bx,y:by,w:bs,h:bs};
+    g.fillStyle=mobile?'rgba(255,163,26,0.25)':'rgba(255,255,255,0.08)';g.fillRect(bx,by,bs,bs);g.strokeStyle=mobile?'#ffa31a':'#9be8e2';g.lineWidth=Math.max(1,2*h);g.strokeRect(bx,by,bs,bs);
+    const pw=bs*0.38,ph=bs*0.64,px=mx-pw/2,py=by+(bs-ph)/2;g.strokeStyle=mobile?'#ffd08a':'#e6fffd';g.lineWidth=Math.max(1.5,2.4*h);g.beginPath();g.roundRect?g.roundRect(px,py,pw,ph,pw*0.18):g.rect(px,py,pw,ph);g.stroke();
+    g.fillStyle=g.strokeStyle;g.fillRect(mx-pw*0.15,py+ph-ph*0.12,pw*0.3,Math.max(1,1.5*h));
+    g.textAlign='center';g.font=F(11,1);g.fillStyle=mobile?'#ffa31a':'#999';g.fillText(mobile?'スマホ操作 ON':'スマホ操作 OFF',mx,by+bs+16*h)}
   // 音のオン／オフボタン：盤面の右下のマスのすぐ右（余白が足りなければ盤面の右下の角の内側）
   {const L0=layout(cw,chh),S0=L0.S,bx0=L0.ox+view.w*S0,by0=L0.oy+view.h*S0,bs=Math.max(26,S0*0.9),gap=bs*0.25;
-   const bx=cw-bx0>=bs+gap*2?bx0+gap:bx0-bs-gap,by=by0-bs;muteBtn={x:bx,y:by,s:bs};
+   const bx=cw-bx0>=bs+gap*2?bx0+gap:bx0-bs-gap,by=mobile?L0.oy:by0-bs;muteBtn={x:bx,y:by,s:bs};   // スマホモードでは右下が回転ボタンなので右上へ
+   // ポーズボタン：音のボタンと左右対称の位置（盤面の左側）
+   {const px=cw-bx-bs;pauseBtn={x:px,y:by,s:bs};const q=bs/24;
+    g.fillStyle=paused?'rgba(255,163,26,0.25)':'rgba(255,255,255,0.08)';g.fillRect(px,by,bs,bs);g.strokeStyle='#9be8e2';g.lineWidth=Math.max(1,bs/24);g.strokeRect(px,by,bs,bs);
+    g.fillStyle='#e6fffd';if(paused){g.beginPath();g.moveTo(px+8*q,by+5*q);g.lineTo(px+19*q,by+12*q);g.lineTo(px+8*q,by+19*q);g.closePath();g.fill()}else{g.fillRect(px+7*q,by+5*q,3.5*q,14*q);g.fillRect(px+13.5*q,by+5*q,3.5*q,14*q)}}
    g.fillStyle='rgba(255,255,255,0.08)';g.fillRect(bx,by,bs,bs);g.strokeStyle='#9be8e2';g.lineWidth=Math.max(1,bs/24);g.strokeRect(bx,by,bs,bs);
    const q=bs/24;g.fillStyle='#e6fffd';g.beginPath();g.moveTo(bx+5*q,by+9*q);g.lineTo(bx+9*q,by+9*q);g.lineTo(bx+14*q,by+4.5*q);g.lineTo(bx+14*q,by+19.5*q);g.lineTo(bx+9*q,by+15*q);g.lineTo(bx+5*q,by+15*q);g.closePath();g.fill();
    g.strokeStyle=muted?'#ff5a5a':'#e6fffd';g.lineWidth=2*q;g.beginPath();
@@ -414,10 +427,47 @@ function draw(){
    else{g.arc(bx+14*q,by+12*q,3.5*q,-0.9,0.9);g.moveTo(bx+14*q+6.5*q*Math.cos(-0.9),by+12*q+6.5*q*Math.sin(-0.9));g.arc(bx+14*q,by+12*q,6.5*q,-0.9,0.9)}
    g.stroke()}
 }
-cv.addEventListener('mousedown',e=>{if(!muteBtn)return;const r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
-  if(x>=muteBtn.x&&x<=muteBtn.x+muteBtn.s&&y>=muteBtn.y&&y<=muteBtn.y+muteBtn.s){audioInit();setMute(!muted)}});
-cv.addEventListener('mousemove',e=>{if(!muteBtn)return;const r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
-  cv.style.cursor=x>=muteBtn.x&&x<=muteBtn.x+muteBtn.s&&y>=muteBtn.y&&y<=muteBtn.y+muteBtn.s?'pointer':'default'});
+// ===== スマホモード：タイトル画面のスマホボタンで切り替え。十字（左下）と回転ボタン（右下）を画面に重ねて表示 =====
+const inBox=(b,x,y)=>b&&x>=b.x&&x<=b.x+b.w&&y>=b.y&&y<=b.y+b.h;
+function touchLayout(cw,chh){
+  const d=chh/2,m=chh*0.03,rw=chh/4;
+  return {pad:{x:m,y:chh-d-m,w:d,h:d},rotR:{x:cw-rw-m,y:chh-d-m,w:rw,h:d/2},rotL:{x:cw-rw-m,y:chh-d/2-m,w:rw,h:d/2}};
+}
+function padDir(b,x,y){const cx=b.x+b.w/2,cy=b.y+b.h/2,dx=x-cx,dy=y-cy;if(Math.hypot(dx,dy)<b.w*0.1)return null;
+  return Math.abs(dx)>Math.abs(dy)?[Math.sign(dx),0]:[0,Math.sign(dy)]}
+const touches={};let padHeld=null,rotHeld=0;
+function touchDir(d){padHeld=d?d.join(','):null;if(!d){if(hold&&hold.key==='touch')hold=null;return}
+  if(title){title=false;return}move(d[0],d[1]);hold={dx:d[0],dy:d[1],t:0,rep:0,key:'touch'}}
+cv.addEventListener('pointerdown',e=>{audioInit();const r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
+  if(muteBtn&&x>=muteBtn.x&&x<=muteBtn.x+muteBtn.s&&y>=muteBtn.y&&y<=muteBtn.y+muteBtn.s){setMute(!muted);e.preventDefault();return}
+  if(pauseBtn&&x>=pauseBtn.x&&x<=pauseBtn.x+pauseBtn.s&&y>=pauseBtn.y&&y<=pauseBtn.y+pauseBtn.s){togglePause();e.preventDefault();return}
+  if(title&&inBox(phoneBtn,x,y)){setMobile(!mobile);e.preventDefault();return}
+  if(!mobile)return;e.preventDefault();
+  const T=touchLayout(cv.clientWidth,cv.clientHeight);
+  if(inBox(T.pad,x,y)){touches[e.pointerId]='pad';try{cv.setPointerCapture(e.pointerId)}catch(_){}touchDir(padDir(T.pad,x,y));return}
+  const rd=inBox(T.rotR,x,y)?1:inBox(T.rotL,x,y)?-1:0;
+  if(rd){touches[e.pointerId]='rot';rotHeld=rd;if(title)title=false;else turn(rd)}});
+cv.addEventListener('pointermove',e=>{const r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
+  if(touches[e.pointerId]==='pad'){const d=padDir(touchLayout(cv.clientWidth,cv.clientHeight).pad,x,y),k2=d?d.join(','):null;if(k2!==padHeld)touchDir(d);return}   // 指を滑らせて方向を変えられる
+  if(e.pointerType==='mouse'){const on=(muteBtn&&x>=muteBtn.x&&x<=muteBtn.x+muteBtn.s&&y>=muteBtn.y&&y<=muteBtn.y+muteBtn.s)||(pauseBtn&&x>=pauseBtn.x&&x<=pauseBtn.x+pauseBtn.s&&y>=pauseBtn.y&&y<=pauseBtn.y+pauseBtn.s)||(title&&inBox(phoneBtn,x,y));cv.style.cursor=on?'pointer':'default'}});
+const touchEnd=e=>{const t=touches[e.pointerId];delete touches[e.pointerId];if(t==='pad')touchDir(null);if(t==='rot')rotHeld=0};
+cv.addEventListener('pointerup',touchEnd);cv.addEventListener('pointercancel',touchEnd);
+cv.addEventListener('contextmenu',e=>e.preventDefault());
+function drawTouch(cw,chh){
+  const T=touchLayout(cw,chh),pb=T.pad,c=pb.w/3;
+  g.save();g.lineWidth=2;
+  const arm=(x,y,on)=>{g.fillStyle=on?'rgba(155,232,226,0.35)':'rgba(255,255,255,0.10)';g.strokeStyle='rgba(155,232,226,0.45)';g.fillRect(x,y,c,c);g.strokeRect(x+1,y+1,c-2,c-2)};
+  const tri=(cx,cy,dx,dy)=>{const a=c*0.22;g.fillStyle='rgba(255,255,255,0.6)';g.beginPath();g.moveTo(cx+dx*a,cy+dy*a);g.lineTo(cx-dx*a*0.6-dy*a,cy-dy*a*0.6+dx*a);g.lineTo(cx-dx*a*0.6+dy*a,cy-dy*a*0.6-dx*a);g.closePath();g.fill()};
+  for(const [dx,dy] of [[0,-1],[0,1],[-1,0],[1,0]]){const x=pb.x+c+dx*c,y=pb.y+c+dy*c;arm(x,y,padHeld===dx+','+dy);tri(x+c/2,y+c/2,dx,dy)}
+  g.fillStyle='rgba(255,255,255,0.06)';g.fillRect(pb.x+c,pb.y+c,c,c);
+  for(const [b,d] of [[T.rotR,1],[T.rotL,-1]]){
+    g.fillStyle=rotHeld===d?'rgba(155,232,226,0.35)':'rgba(255,255,255,0.10)';g.strokeStyle='rgba(155,232,226,0.45)';g.lineWidth=2;g.fillRect(b.x,b.y,b.w,b.h);g.strokeRect(b.x+1,b.y+1,b.w-2,b.h-2);
+    const cx=b.x+b.w/2,cy=b.y+b.h/2,rr=Math.min(b.w,b.h)*0.25;g.strokeStyle='rgba(255,255,255,0.6)';g.lineWidth=Math.max(2,rr*0.22);g.beginPath();
+    const a0=d>0?-Math.PI*0.75:-Math.PI*0.25,a1=d>0?Math.PI*0.75:-Math.PI*1.75;g.arc(cx,cy,rr,a0,a1,d<0);g.stroke();   // 矢印付きの円弧（上：右回り／下：左回り）
+    const ex=cx+rr*Math.cos(a1),ey=cy+rr*Math.sin(a1),tx=-Math.sin(a1)*d,ty=Math.cos(a1)*d,h=rr*0.55;g.fillStyle='rgba(255,255,255,0.6)';g.beginPath();g.moveTo(ex+tx*h,ey+ty*h);g.lineTo(ex-tx*h*0.2+Math.cos(a1)*h*0.6,ey-ty*h*0.2+Math.sin(a1)*h*0.6);g.lineTo(ex-tx*h*0.2-Math.cos(a1)*h*0.6,ey-ty*h*0.2-Math.sin(a1)*h*0.6);g.closePath();g.fill();
+  }
+  g.restore();
+}
 let last=performance.now();
 // ゲームパッド：十字キー／左スティックで1回1マス（スティックは中央に戻すまで次の移動なし）、A／スタートで開始・再開
 const padPrev={};let padOK=!!navigator.getGamepads;
