@@ -129,13 +129,17 @@ reset();
 const fpos=i=>trail[i]||null;
 const blocked=(x,y)=>{for(let i=0;i<n;i++){const f=fpos(i);if(f&&f.x==x&&f.y==y)return true}return false};
 
+// 追従機を1つ増やす（拾ったとき・爆弾を壊したとき共通）。拾った数・警戒レベル・拡大もここで進む
+function addFollower(){
+  n++;got++;if(got%ALERT_EVERY==0){tone(520,0.12,'square',0.08);setTimeout(()=>tone(520,0.12,'square',0.08),160)}   // 警戒レベル上昇の警報音
+  kind[n-1]=got%TURRET_EVERY==0?'c':'w';   // 拾った数の5の倍数ごとに水色の追従機
+  waves.push({t:0});checkExpand();
+}
 function gotFriend(){
-  n++;got++;score+=100;if(got%ALERT_EVERY==0){tone(520,0.12,'square',0.08);setTimeout(()=>tone(520,0.12,'square',0.08),160)}   // 警戒レベル上昇の警報音
- kind[n-1]=got%TURRET_EVERY==0?'c':'w';   // 拾った数の5の倍数ごとに水色の追従機
+  score+=100;addFollower();
   const now=performance.now()/1000;streak=now-lastPick<1.5?streak+1:0;lastPick=now;   // 1.5秒以内に続けて拾うと音程が上がる
-  SE.pick(streak);pops.push({x:p.x,y:p.y,life:0.8});waves.push({t:0});
+  SE.pick(streak);pops.push({x:p.x,y:p.y,life:0.8});
   if(score>hi){hi=score;newHi=true;saveHi()}
-  checkExpand();
 }
 function checkExpand(){if(!exp&&k<TH.length&&n>=TH[k]){exp={t:0,from:{...view},to:bounds(k+1)};k++;B=exp.to;SE.exp();launch();placeHoles()}}
 function placeHoles(){
@@ -302,7 +306,7 @@ function sub(dt){
     if(outside(b,1)||(b.life!==undefined&&b.life<=0))return false;   // 射程の切れた弾は消える
     if(!b.sp)for(let i=0;i<n;i++){const f=fpos(i);if(f&&Math.abs(f.x-b.x)<0.6&&Math.abs(f.y-b.y)<0.6)return false}   // 通常弾だけ体で止まる
     if(!b.sp)for(const bm of bombs){if(!bm.done&&Math.abs(bm.x-b.x)<0.6&&Math.abs(bm.y-b.y)<0.6){   // 自機の弾だけ爆弾を壊せる
-      bm.hp-=1;bm.fl=0.1;if(bm.hp<=0){bm.done=true;bm.defused=true;burst(bm.x,bm.y);score+=BOMB_PTS;if(score>hi){hi=score;newHi=true;saveHi()}pops.push({x:bm.x,y:bm.y,life:0.8,v:BOMB_PTS});tone(1200,0.12,'triangle',0.15,400);addShake(3)}else tone(900,0.04,'square',0.06);return false}}
+      bm.hp-=1;bm.fl=0.1;if(bm.hp<=0){bm.done=true;bm.defused=true;burst(bm.x,bm.y);score+=BOMB_PTS;if(score>hi){hi=score;newHi=true;saveHi()}pops.push({x:bm.x,y:bm.y,life:0.8,v:BOMB_PTS});tone(1200,0.12,'triangle',0.15,400);addShake(3);cands.push({x:bm.x,y:bm.y,dx:0,dy:0})}else tone(900,0.04,'square',0.06);return false}}
     for(const e of enemies){if(Math.abs(e.x-b.x)<0.7&&Math.abs(e.y-b.y)<0.7){damage(e,b.dmg||1,b.x,b.y);return false}}
     return true});
   // 敵の判定
