@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SNAKE SHOT</title>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#0d0d12;color:#eee;font-family:sans-serif;user-select:none}
+body{display:flex;flex-direction:column}
+#hud,#foot{display:flex;justify-content:space-between;padding:0.6vh 2vw;font-size:clamp(18px,3.4vh,44px);font-weight:bold;font-variant-numeric:tabular-nums;letter-spacing:0.05em}
+#hud span:first-child{color:#ffa31a}
+canvas{flex:1;width:100%;min-height:0;display:block}
+</style></head><body>
+<div id="hud"><span id="sc">SCORE 0</span><span id="hs">HI SCORE 0</span><span id="ln">ALERT</span></div>
+<canvas id="c"></canvas>
+<div id="foot">&nbsp;</div>
+<script>
+// ---- 定数 ----
+const TH=[8,20,36,56,80];           // 拡張する長さ（間隔を徐々に広げて密度をゆるやかに上げる）
+const ENEMY_HP=5;                   // 敵の耐久度：最初5、ウェーブごとの増え方を+2,+3,+4,+5…と大きくする（5→7→10→14→19→25）
+const waveHP=k=>ENEMY_HP+k*(k+3)/2;
+const DENS_AREA_EXP=0.75;           // 盤面が広がった分だけ出現数を増やす（面積比の0.75乗）。広がっても密度が薄まらないように
+const DENS_PER_WAVE=0.08;           // ウェーブごとに出現間隔を8%ずつ短くする（密度を少し上げる）
+const ENEMY_PX=16,ENEMY_PX_ADD=40;  // 敵速度 px/秒（0人→100人で16→56。上がり方をゆるやかに）
+const BULLET_PX=336;                // 弾速 px/秒
+// 警戒レベル（ALERT）：表示のみ。拾った数5個ごとに1つ上がる（敵の速さ・出現間隔は拾った数で強くなっていくので、その目安）。20で敵の速さ・出現間隔が最大
+const ALERT_EVERY=5;
+const alertLv=()=>Math.floor(got/ALERT_EVERY);
+const MAG_ACC=30,MAG_MAX=16;        // 候補の吸い寄せ：加速度(マス/秒²)・最高速(マス/秒)。倒した直後はゆっくり、だんだん速く
+// 5機ごとの追従機（水色）が、一番近い敵を追尾する弾を自動で撃つ。弾は体をすり抜ける
+const TURRET_EVERY=5,TURRET_IV=1.0,TURRET_COL='#5ee8ff';
+// 自機の通常弾の強化：エリア拡大ごとに1段階
+// rate=連射間隔(秒) pow2=何発に1回威力2の強化弾か(0=なし) spread=前方の弾数(15°間隔) pulse=周囲パルスの間隔(秒,0=なし)
+const UP=[
+  {rate:0.28,pow2:0,spread:1,pulse:0,label:''},
+  {rate:0.2, pow2:0,spread:1,pulse:0,label:'通常弾 連射アップ'},
+  {rate:0.2, pow2:0,spread:3,pulse:0,label:'通常弾 前方3方向'},
+  {rate:0.2, pow2:3,spread:3,pulse:0,label:'通常弾 強化弾（3回に1回 威力2）'},
+  {rate:0.2, pow2:3,spread:3,pulse:3,label:'パルス（3秒ごとに周囲を攻撃）'},
+  {rate:0.2, pow2:3,spread:5,pulse:2,label:'通常弾 前方5方向・パルス強化'}];
+const PULSE_R=2.5;                  // パルスの半径(マス)
+// 打ち上げ：エリア拡大の瞬間、水色以外（白）の体がロケットのように上へ打ち上げられて画面外へ消える。水色の追従機だけが残って前に詰まる
+const LAUNCH_ACC=60,SLIDE_DUR=0.6;   // 打ち上げの加速度(マス/秒²)、残った追従機が前に詰まる時間(秒)
+// 穴（移動不可エリア）：自機だけが入れない。体・敵・弾・候補・爆弾は関係なく重なれる。ウェーブ（拡大）ごとに配置し直す
+// HOLES[k]=[大きさ, 数]。1つのウェーブでは大きさを混ぜない。自機の周り（HOLE_SAFE マス以内）には置かない
+const HOLES=[[2,4],[2,5],[2,6],[3,4],[3,5],[3,6]],HOLE_SAFE=2;
+const FENCE_PERIOD=0.8,FENCE_GLOW=5;   // FENCE_GLOW：柵のまわりのぼんやりした光の広がり
+   // 電気柵の揺らぎ：この秒数かけて次の形へゆっくり変わる
+const SHAKE_KILL=1.5,SHAKE_BOMB=6;   // 画面揺れ：敵を倒したとき／爆弾が爆発したとき（後半は数が多いので控えめ）
+const WAVE_SPD=40;                  // 拾ったときの光の波が体を流れる速さ（機/秒）
+const BOMB_INT=10,BOMB_FUSE=5,BOMB_WARN=1.5; // 爆弾：10秒ごとに出現／5秒で爆発／最後の1.5秒は赤い予告エリア
+const BOMB_R=2,BOMB_R_WAVE=1;        // 爆発範囲：最初は中心から2マス（5×5）。ウェーブ（エリア拡大）ごとに1マス広がる（出現時に決まる）
+const BOMB_PTS=150;                 // 爆弾を壊したときの得点
+const BOMB_HP=3;                    // 爆弾は自機の通常弾3発で壊せる（爆発しないで消える）
+const BOMB_FUSE_PER=0.12;           // 体1機ごとに爆発までの時間を延ばす(秒)。長い体でも抜けきれるように。予告エリアは導火線の3割（最低1.5秒）
+const BOMB_GAP=0.6;                 // 一度に複数出るとき、1個ずつずらす間隔(秒)。数はウェーブごとに+1
+const cv=document.getElementById('c'),g=cv.getContext('2d'),dpr=Math.min(window.devicePixelRatio||1,3);
+const hSc=document.getElementById('sc'),hHs=document.getElementById('hs'),hLn=document.getElementById('ln');
+// 拡張段階kの盤面（ワールド座標）。全方向に2マスずつ広がる。外周1マスが侵入不可
+const W0=27,H0=15;                  // 初期盤面（横長16:9）
+const bounds=k=>({x0:-2*k,y0:-2*k,w:W0+4*k,h:H0+4*k});
+
+let hudAlert=-1,holes=[],holeSet=new Set(),holeT=0,got=0,kind=[],rockets=[],slide=null,hold=null,flash=0,paused=false,bombQ=[],shotN=0,turT=[],pulseT=0,pulses=[],title=true,p,trail,n,score,hi=0,newHi,enemies,cands,bullets,sparks=[],spawnT,fireT,over,overT,k,B,view,exp,bombs,bombT,blasts=[],why,chain,pDead,gone;
+try{hi=+localStorage.getItem('tomodachi100_hi')||0}catch(e){}
+const saveHi=()=>{try{localStorage.setItem('tomodachi100_hi',hi)}catch(e){}};
+
+// 速度計算用の基準マスサイズ。初期盤面で24px、拡張で引いた分だけ小さくなる（実際の画面サイズに依存しない）
+const cell=()=>24*Math.min(W0/B.w,H0/B.h);
+const ring=e=>{const x=Math.round(e.x),y=Math.round(e.y);return x<=B.x0||x>=B.x0+B.w-1||y<=B.y0||y>=B.y0+B.h-1};
+const outside=(o,m)=>o.x<B.x0-m||o.x>B.x0+B.w-1+m||o.y<B.y0-m||o.y>B.y0+B.h-1+m;
+// ---- 効果音（Web Audioで合成。最初のキー入力で有効になる） ----
+let AC=null,master=null,noiseBuf=null,muted=false,muteBtn=null;
+try{muted=localStorage.getItem('snakeshot_mute')==='1'}catch(e){}
+function setMute(m){muted=m;if(master)master.gain.value=m?0:0.35;if(typeof bgm!=='undefined')bgm.muted=m;try{localStorage.setItem('snakeshot_mute',m?'1':'0')}catch(e){}}
+function audioInit(){
+  if(!AC){try{AC=new (window.AudioContext||window.webkitAudioContext)();master=AC.createGain();master.gain.value=muted?0:0.35;master.connect(AC.destination)}catch(e){AC=null}}
+  if(AC&&AC.state==='suspended')AC.resume().catch(()=>{});
+}
+function tone(f,dur,type,vol,f2){
+  if(!AC||AC.state!=='running')return;
+  const t=AC.currentTime,o=AC.createOscillator(),gn=AC.createGain();
+  o.type=type;o.frequency.setValueAtTime(f,t);if(f2)o.frequency.exponentialRampToValueAtTime(f2,t+dur);
+  gn.gain.setValueAtTime(vol,t);gn.gain.exponentialRampToValueAtTime(0.001,t+dur);
+  o.connect(gn);gn.connect(master);o.start(t);o.stop(t+dur+0.02);
+}
+function noise(dur,vol,fc){
+  if(!AC||AC.state!=='running')return;
+  if(!noiseBuf){noiseBuf=AC.createBuffer(1,AC.sampleRate,AC.sampleRate);const d=noiseBuf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1}
+  const t=AC.currentTime,src=AC.createBufferSource(),f=AC.createBiquadFilter(),gn=AC.createGain();
+  src.buffer=noiseBuf;f.type='lowpass';f.frequency.setValueAtTime(fc,t);f.frequency.exponentialRampToValueAtTime(80,t+dur);
+  gn.gain.setValueAtTime(vol,t);gn.gain.exponentialRampToValueAtTime(0.001,t+dur);
+  src.connect(f);f.connect(gn);gn.connect(master);src.start(t);src.stop(t+dur+0.02);
+}
+// ===== BGM：同じフォルダの bgm.mp3 をループ再生（音量50%）。プレイ中だけ鳴り、ポーズ・ゲームオーバー・タイトルでは止まる =====
+const BGM_FILE='bgm.mp3',BGM_VOL=0.5;
+const bgm=new Audio(BGM_FILE);bgm.loop=true;bgm.volume=BGM_VOL;bgm.preload='auto';bgm.muted=muted;
+let bgmOn=false,bgmWasOver=false;
+function bgmUpdate(){
+  const play=!title&&!over&&!paused;
+  if(play&&!bgmOn){if(bgmWasOver)bgm.currentTime=0;bgm.play().catch(()=>{});bgmOn=true;bgmWasOver=false}   // ファイルが無いときは無音のまま
+  else if(!play&&bgmOn){bgm.pause();bgmOn=false;if(over||title)bgmWasOver=true}
+}
+let lastPop=0;
+const SE={
+  shot:()=>tone(1400,0.03,'square',0.025,900),                                   // 発射
+  spshot:()=>tone(2200,0.06,'sine',0.05,1500),                                   // 水色の追従機の発射
+  pulse:()=>{tone(150,0.3,'sine',0.3,600);noise(0.2,0.15,4000)},                 // パルス
+  hit:()=>tone(320,0.05,'square',0.08,180),                                       // 命中
+  conv:()=>{tone(90,0.2,'sawtooth',0.18,300);noise(0.18,0.3,1200)},            // 候補化
+  pick:k=>{const f=1047*Math.pow(2,Math.min(k,24)/12);tone(f,0.14,'triangle',0.28);tone(f*2,0.1,'sine',0.08)}, // 拾う（連続で音程が上がる）
+  bomb:()=>{noise(0.8,0.8,600);tone(50,0.6,'sine',0.5,22)},                      // 爆弾の爆発
+  pop:()=>{const t=performance.now();if(t-lastPop<30)return;lastPop=t;noise(0.12,0.3,2500)}, // 連鎖爆発（体）
+  die:()=>{noise(0.9,0.7,1400);tone(300,0.9,'sawtooth',0.15,50)},                 // 自機の爆発
+  exp:()=>[523,659,784,1047].forEach((f,i)=>setTimeout(()=>tone(f,0.18,'triangle',0.22),i*70)), // 拡張
+};
+// ---- 手応えの演出 ----
+let hitStop=0,shake=0,waves=[],pops=[],streak=0,lastPick=-9;
+const addShake=v=>{shake=Math.max(shake,v)};
+// 敵にダメージ。耐久度が0になったら候補に変える
+function damage(e,d,hx,hy){
+  const j=enemies.indexOf(e);if(j<0)return;
+  e.hp-=d;e.fl=0.08;
+  if(e.hp<=0){cands.push({x:e.x,y:e.y,dx:e.dx,dy:e.dy});burst(e.x,e.y);   // レア敵は強化アイテムを落とす
+    enemies.splice(j,1);SE.conv();hitStop=0.05;addShake(SHAKE_KILL)}
+  else{SE.hit();for(let i=0;i<3;i++){const a=Math.random()*6.28;sparks.push({x:hx,y:hy,vx:Math.cos(a)*2,vy:Math.sin(a)*2,life:0.15})}}
+}
+function burst(x,y){for(let i=0;i<10;i++){const a=Math.random()*6.28,v=2+Math.random()*3;sparks.push({x,y,vx:Math.cos(a)*v,vy:Math.sin(a)*v,life:0.35})}}
+function reset(){p={x:13,y:12,dx:0,dy:-1};trail=[];n=0;score=0;newHi=false;enemies=[];cands=[];bullets=[];sparks=[];spawnT=0;fireT=0;shotN=0;turT=[];pulseT=0;pulses=[];over=false;overT=0;k=0;B=bounds(0);view={...B};exp=null;bombs=[];bombT=BOMB_INT;bombQ=[];blasts=[];why='';chain=null;pDead=false;gone=new Set();hold=null;placeHoles();got=0;kind=[];rockets=[];slide=null;paused=false;flash=0;hitStop=0;shake=0;waves=[];pops=[];streak=0;lastPick=-9}
+reset();
+
+const fpos=i=>trail[i]||null;
+const blocked=(x,y)=>{for(let i=0;i<n;i++){const f=fpos(i);if(f&&f.x==x&&f.y==y)return true}return false};
+
+function gotFriend(){
+  n++;got++;score+=100;if(got%ALERT_EVERY==0){tone(520,0.12,'square',0.08);setTimeout(()=>tone(520,0.12,'square',0.08),160)}   // 警戒レベル上昇の警報音
+ kind[n-1]=got%TURRET_EVERY==0?'c':'w';   // 拾った数の5の倍数ごとに水色の追従機
+  const now=performance.now()/1000;streak=now-lastPick<1.5?streak+1:0;lastPick=now;   // 1.5秒以内に続けて拾うと音程が上がる
+  SE.pick(streak);pops.push({x:p.x,y:p.y,life:0.8});waves.push({t:0});
+  if(score>hi){hi=score;newHi=true;saveHi()}
+  checkExpand();
+}
+function checkExpand(){if(!exp&&k<TH.length&&n>=TH[k]){exp={t:0,from:{...view},to:bounds(k+1)};k++;B=exp.to;SE.exp();launch();placeHoles()}}
+function placeHoles(){
+  holes=[];holeSet=new Set();holeT=0;
+  const [sz0,cnt]=HOLES[Math.min(k,HOLES.length-1)],sizes=Array(cnt).fill(sz0);
+  for(const sz of sizes){
+    for(let tries=0;tries<200;tries++){
+      const x=B.x0+1+Math.floor(Math.random()*(B.w-2-sz+1)),y=B.y0+1+Math.floor(Math.random()*(B.h-2-sz+1));
+      if(p.x>=x-HOLE_SAFE&&p.x<x+sz+HOLE_SAFE&&p.y>=y-HOLE_SAFE&&p.y<y+sz+HOLE_SAFE)continue;   // 自機の近くは避ける
+      if(holes.some(h=>x<h.x+h.s+1&&h.x<x+sz+1&&y<h.y+h.s+1&&h.y<y+sz+1))continue;   // 穴どうしは1マス空ける
+      holes.push({x,y,s:sz});
+      for(let i=0;i<sz;i++)for(let j=0;j<sz;j++)holeSet.add((x+i)+','+(y+j));
+      break;
+    }
+  }
+}
+const isHole=(x,y)=>holeSet.has(x+','+y);
+// 白い体を打ち上げ、水色の追従機だけを前に詰める
+function launch(){
+  const keep=[],from=[];let j=0;
+  for(let i=0;i<n;i++){const f=fpos(i);if(!f)continue;
+    if(kind[i]==='c'){keep.push('c');from.push({x:f.x,y:f.y})}
+    else rockets.push({x:f.x,y:f.y,vy:-2,delay:(j++)*0.025})}
+  n=keep.length;kind=keep;slide={t:0,from};turT=turT.slice(0,n);
+  noise(1.2,0.35,900);tone(200,1.0,'sawtooth',0.08,900);
+}
+
+// ポーズ：ESC / スタートボタンで切り替え（タイトル・ゲームオーバー中は無効）
+// その場で向きだけ90°回す（1=右回り, -1=左回り）。移動するとまた進む方向を向く
+function turn(d){if(title||over||paused||chain||exp)return;const dx=p.dx,dy=p.dy;if(d>0){p.dx=-dy;p.dy=dx}else{p.dx=dy;p.dy=-dx}tone(700,0.03,'triangle',0.05)}
+function togglePause(){if(title||over||chain)return;paused=!paused;tone(paused?660:880,0.08,'triangle',0.15)}
+function move(dx,dy){
+  if(paused)return;
+  if(over){if(overT>0.6)reset();return}
+  if(exp)return;                    // 拡張中は一時停止
+  p.dx=dx;p.dy=dy;
+  const nx=p.x+dx,ny=p.y+dy;
+  if(nx<=B.x0||nx>=B.x0+B.w-1||ny<=B.y0||ny>=B.y0+B.h-1)return;   // 外周には入れない
+  if(blockedAt(nx,ny))return;       // 体は通れない（しっぽの先は空くので通れる）
+  for(const e of enemies)if(Math.round(e.x)==nx&&Math.round(e.y)==ny)return;   // 敵のいるマスには入れない
+  if(isHole(nx,ny))return;   // 穴には入れない
+  if(bombs.some(b=>!b.done&&b.x==nx&&b.y==ny))return;   // 爆弾のマスにも入れない（壊せば通れる）
+  trail.unshift({x:p.x,y:p.y});if(trail.length>n+60)trail.length=n+60;
+  p.x=nx;p.y=ny;
+  checkStuck();
+}
+const wallAt=(x,y)=>x<=B.x0||x>=B.x0+B.w-1||y<=B.y0||y>=B.y0+B.h-1;
+function blockedAt(x,y){for(let i=0;i<n-1;i++){const f=fpos(i);if(f&&f.x==x&&f.y==y)return true}return false}
+// 4方向すべて外周か友達で塞がれたら即アウト
+// やられた体から前後両方向へ連鎖。しっぽ側も含めて全部消え、最後に自機が爆発（全体で最大0.5秒）
+function startChain(k,w){
+  if(chain||over)return;why=w;
+  const T=Math.min(0.5,0.06*Math.max(k+1,n-k)),ev=[];
+  for(let i=0;i<n;i++)ev.push({i,t:i<=k?T*(k-i)/(k+1):T*(i-k)/(n-k)});
+  ev.push({i:-1,t:T});ev.sort((a,b)=>a.t-b.t);
+  chain={t:0,ev};
+}
+function checkStuck(){
+  if(over)return;
+  for(const [dx,dy] of [[0,-1],[0,1],[-1,0],[1,0]]){const x=p.x+dx,y=p.y+dy;if(!wallAt(x,y)&&!blockedAt(x,y)&&!isHole(x,y))return}
+  over=true;why='動けなくなった！';SE.die();flash=1;addShake(8);
+}
+// 押しっぱなしで連続移動：1回押しは1マス。HOLD_DELAY秒押し続けると毎秒HOLD_RATEマスで進み続ける（短く押したときに移動しすぎないための閾値）
+const HOLD_DELAY=0.22,HOLD_RATE=9;
+addEventListener('keyup',e=>{if(hold&&hold.key===e.key)hold=null});
+addEventListener('blur',()=>{hold=null});
+addEventListener('keydown',e=>{audioInit();if(e.repeat){e.preventDefault();return}   // OSのキーリピートは使わない（連続移動は自前で制御）
+  if(e.key=='Escape'){e.preventDefault();togglePause();return}
+  if(!title){const k2=e.key.toLowerCase();if(k2=='q'||k2=='e'){e.preventDefault();turn(k2=='e'?1:-1);return}}   // Q：左回り / E：右回り
+  if(title){e.preventDefault();title=false;return}const m={ArrowUp:[0,-1],w:[0,-1],ArrowDown:[0,1],s:[0,1],ArrowLeft:[-1,0],a:[-1,0],ArrowRight:[1,0],d:[1,0]}[e.key];if(m){e.preventDefault();move(...m);hold={dx:m[0],dy:m[1],t:0,rep:0,key:e.key}}});
+
+function step(dt){
+  sparks.forEach(s=>{s.x+=s.vx*dt;s.y+=s.vy*dt;s.life-=dt});sparks=sparks.filter(s=>s.life>0);
+  blasts.forEach(b=>b.life-=dt);blasts=blasts.filter(b=>b.life>0);
+  holeT=Math.min(1,holeT+dt/0.6);
+  flash=Math.max(0,flash-dt/0.45);   // 自機がやられたときの画面フラッシュ（0.45秒で消える）
+  if(!paused){   // 打ち上げ演出はエリア拡大の一時停止中も動く
+    for(const r of rockets){if(r.delay>0){r.delay-=dt;continue}r.vy-=LAUNCH_ACC*dt;r.y+=r.vy*dt;if(Math.random()<0.6)sparks.push({x:r.x+(Math.random()-0.5)*0.3,y:r.y+0.5,vx:(Math.random()-0.5)*2,vy:3+Math.random()*3,life:0.3})}
+    rockets=rockets.filter(r=>r.y>view.y0-3);
+    if(slide){slide.t+=dt;if(slide.t>=SLIDE_DUR)slide=null}}
+  shake=Math.max(0,shake-dt*40);pops.forEach(q=>q.life-=dt);pulses.forEach(q=>q.life-=dt);pulses=pulses.filter(q=>q.life>0);pops=pops.filter(q=>q.life>0);
+  waves.forEach(w=>w.t+=dt);waves=waves.filter(w=>w.t*WAVE_SPD<n+3);
+  if(title||paused)return;
+  // 連鎖爆発：やられた体から自機へ向かって順に爆発 → 最後に自機 → ゲームオーバー（全体で0.5秒ほど）
+  if(chain){
+    chain.t+=dt;
+    while(chain&&chain.ev.length&&chain.ev[0].t<=chain.t){
+      const e=chain.ev.shift();
+      if(e.i>=0){const f=fpos(e.i);gone.add(e.i);if(f){burst(f.x,f.y);blasts.push({x:f.x,y:f.y,s:0,life:0.25});SE.pop();addShake(5)}}
+      else{burst(p.x,p.y);burst(p.x,p.y);blasts.push({x:p.x,y:p.y,s:0,life:0.4});pDead=true;over=true;chain=null;SE.die();flash=1;addShake(14)}
+    }
+    return;
+  }
+  if(over){overT+=dt;return}
+  if(exp){
+    // 0.4秒停止 → 0.8秒かけて引く → 0.3秒停止 → 自動再開
+    exp.t+=dt;
+    const a=Math.min(Math.max((exp.t-0.4)/0.8,0),1),e=a<.5?2*a*a:1-Math.pow(-2*a+2,2)/2;
+    for(const key of['x0','y0','w','h'])view[key]=exp.from[key]+(exp.to[key]-exp.from[key])*e;
+    if(exp.t>=1.5){view={...exp.to};exp=null;checkExpand()}
+    return;
+  }
+  if(hitStop>0){hitStop-=dt;return}   // ヒットストップ中は止める
+  // マスが小さくなるとマス/秒が上がるので、すり抜け防止に細かく刻む
+  let r=dt;while(r>1e-6&&!exp&&!over&&!chain&&hitStop<=0){const d=Math.min(r,1/120);sub(d);r-=d}
+}
+
+function sub(dt){
+  const S=cell(),lv=Math.min(got/100,1);   // 速さ・出現間隔は拾った総数で上がる
+  const speed=(ENEMY_PX+ENEMY_PX_ADD*lv+Math.min(Math.max(got-100,0)*0.2,30))/S;  // マス/秒に換算
+  const interval=(2.2-lv*1.4)*(1-DENS_PER_WAVE*k)*Math.pow((W0*H0)/(B.w*B.h),DENS_AREA_EXP),bs=BULLET_PX/S;   // 敵の出現間隔(秒)：長さで2.2→0.8、さらにウェーブごとに短く
+  // 爆弾：自機と重ならない位置に出現 → 点滅がだんだん速く → 周囲8マスに予告 → 爆発
+  bombT-=dt;if(bombT<=0){for(let i=0;i<=k;i++)bombQ.push(i*BOMB_GAP);bombT=BOMB_INT}   // ウェーブ数+1個を少しずつずらして出す
+  bombQ=bombQ.map(t=>t-dt).filter(t=>{if(t>0)return true;
+    let x,y,tries=0;do{x=B.x0+1+Math.floor(Math.random()*(B.w-2));y=B.y0+1+Math.floor(Math.random()*(B.h-2))}while(((x==p.x&&y==p.y)||bombs.some(b=>b.x==x&&b.y==y)||trail.slice(0,n).some(f=>f&&f.x==x&&f.y==y))&&++tries<200);   // 自機・体・ほかの爆弾と重ならない位置
+    bombs.push({x,y,r:BOMB_R+BOMB_R_WAVE*k,t:0,ph:0,hp:BOMB_HP,fl:0,fuse:BOMB_FUSE+n*BOMB_FUSE_PER});return false});
+  for(const bm of bombs){
+    if(bm.done)continue;bm.fl-=dt;bm.t+=dt;const r=bm.t/bm.fuse;bm.ph+=dt*(1+7*r*r);   // 点滅 1回/秒 → 8回/秒
+    if(bm.t>=bm.fuse){
+      bm.done=true;blasts.push({x:bm.x,y:bm.y,s:bm.r,life:0.4});burst(bm.x,bm.y);burst(bm.x,bm.y);SE.bomb();addShake(SHAKE_BOMB);
+      const hit=(x,y)=>Math.abs(x-bm.x)<=bm.r&&Math.abs(y-bm.y)<=bm.r;
+      if(hit(p.x,p.y)){over=true;why='爆発に巻き込まれた！';SE.die();flash=1;addShake(14)}
+      if(!over){let hi2=-1;for(let i=0;i<n;i++){const f=fpos(i);if(f&&hit(f.x,f.y))hi2=i}if(hi2>=0)startChain(hi2,'体が爆発に巻き込まれた！')}
+    }
+  }
+  bombs=bombs.filter(b=>!b.done);if(over)return;
+  spawnT-=dt;if(spawnT<=0){
+    const sd=Math.floor(Math.random()*4),c=B.x0+1+Math.floor(Math.random()*(B.w-2)),w=B.y0+1+Math.floor(Math.random()*(B.h-2));
+    enemies.push([{x:c,y:B.y0-1,dx:0,dy:1},{x:c,y:B.y0+B.h,dx:0,dy:-1},{x:B.x0-1,y:w,dx:1,dy:0},{x:B.x0+B.w,y:w,dx:-1,dy:0}][sd]);
+    Object.assign(enemies[enemies.length-1],{hp:waveHP(k),max:waveHP(k),fl:0});
+    spawnT=interval*(0.6+Math.random()*0.8);
+  }
+  if(hold){hold.t+=dt;if(hold.t>=HOLD_DELAY){hold.rep-=dt;if(hold.rep<=0){hold.rep=1/HOLD_RATE;move(hold.dx,hold.dy);if(over||chain||exp)return}}}
+  // 自機の通常弾（正面・前方拡散・強化弾）
+  const up=UP[k];
+  fireT-=dt;if(fireT<=0){
+    shotN++;const dmg=up.pow2&&shotN%up.pow2==0?2:1;
+    for(let j=0;j<up.spread;j++){const a=(j-(up.spread-1)/2)*15*Math.PI/180,c=Math.cos(a),sn=Math.sin(a);
+      bullets.push({x:p.x+p.dx*0.6,y:p.y+p.dy*0.6,dx:p.dx*c-p.dy*sn,dy:p.dx*sn+p.dy*c,dmg})}
+    fireT=up.rate;SE.shot();
+  }
+  // 周囲パルス
+  if(up.pulse){pulseT-=dt;if(pulseT<=0){pulseT=up.pulse;pulses.push({x:p.x,y:p.y,life:0.35});SE.pulse();
+    for(const e of [...enemies])if(Math.hypot(e.x-p.x,e.y-p.y)<=PULSE_R)damage(e,1,e.x,e.y)}}
+  // 5機ごとの追従機：一番近い敵へ追尾弾
+  const nearest=(x,y)=>{let best=null,bd=1e9;for(const e of enemies){const d=Math.hypot(e.x-x,e.y-y);if(d<bd){bd=d;best=e}}return best};
+  for(let i=0,t=-1;i<n;i++){if(kind[i]!=='c')continue;t++;
+    const f=fpos(i);if(!f||gone.has(i)||slide)continue;
+    if(turT[t]===undefined)turT[t]=Math.random()*TURRET_IV;
+    turT[t]-=dt;if(turT[t]>0)continue;
+    const e=nearest(f.x,f.y);if(!e)continue;const d=Math.hypot(e.x-f.x,e.y-f.y)||1;
+    bullets.push({x:f.x,y:f.y,dx:(e.x-f.x)/d,dy:(e.y-f.y)/d,sp:true,dmg:1,home:e,col:TURRET_COL});turT[t]=TURRET_IV;SE.spshot();
+  }
+  bullets.forEach(b=>{
+    if(b.home){if(!enemies.includes(b.home))b.home=nearest(b.x,b.y);   // 追尾：狙った敵が消えたら次の敵へ
+      if(b.home){const vx=b.home.x-b.x,vy=b.home.y-b.y,d=Math.hypot(vx,vy)||1;b.dx=vx/d;b.dy=vy/d}else b.life=b.life??1}
+    if(b.life!==undefined)b.life-=dt;b.x+=b.dx*bs*dt;b.y+=b.dy*bs*dt});
+  // 敵は自機の1マス手前でその場にピタッと止まる（押し戻しはしない）。自機がどけばまた進む
+  enemies.forEach(e=>{let st=speed*dt;const onLine=e.dx?Math.round(e.y)==p.y:Math.round(e.x)==p.x,ahead=e.dx?(p.x-e.x)*e.dx:(p.y-e.y)*e.dy;
+    if(onLine&&ahead>=0)st=Math.max(0,Math.min(st,ahead-1));
+    e.x+=e.dx*st;e.y+=e.dy*st;e.fl-=dt;if(e.kb){e.x=Math.max(B.x0+1,Math.min(B.x0+B.w-2,e.x+e.kb.vx*dt));e.y=Math.max(B.y0+1,Math.min(B.y0+B.h-2,e.y+e.kb.vy*dt));e.kb.t-=dt;if(e.kb.t<=0)e.kb=null}});cands.forEach(c=>{c.v=Math.min((c.v||0)+MAG_ACC*dt,MAG_MAX);const ddx=p.x-c.x,ddy=p.y-c.y,d=Math.hypot(ddx,ddy)||1,st=Math.min(c.v*dt,d);c.x+=ddx/d*st;c.y+=ddy/d*st});   // 自機に吸い寄せられる
+  // 弾の判定
+  bullets=bullets.filter(b=>{
+    if(outside(b,1)||(b.life!==undefined&&b.life<=0))return false;   // 射程の切れた弾は消える
+    if(!b.sp)for(let i=0;i<n;i++){const f=fpos(i);if(f&&Math.abs(f.x-b.x)<0.6&&Math.abs(f.y-b.y)<0.6)return false}   // 通常弾だけ体で止まる
+    if(!b.sp)for(const bm of bombs){if(!bm.done&&Math.abs(bm.x-b.x)<0.6&&Math.abs(bm.y-b.y)<0.6){   // 自機の弾だけ爆弾を壊せる
+      bm.hp-=1;bm.fl=0.1;if(bm.hp<=0){bm.done=true;bm.defused=true;burst(bm.x,bm.y);score+=BOMB_PTS;if(score>hi){hi=score;newHi=true;saveHi()}pops.push({x:bm.x,y:bm.y,life:0.8,v:BOMB_PTS});tone(1200,0.12,'triangle',0.15,400);addShake(3)}else tone(900,0.04,'square',0.06);return false}}
+    for(const e of enemies){if(Math.abs(e.x-b.x)<0.7&&Math.abs(e.y-b.y)<0.7){damage(e,b.dmg||1,b.x,b.y);return false}}
+    return true});
+  // 敵の判定
+  enemies=enemies.filter(e=>{
+    const ex=Math.round(e.x),ey=Math.round(e.y);
+    if(outside(e,2.5))return false;
+    for(let i=0;i<n;i++){const f=fpos(i);if(f&&f.x==ex&&f.y==ey){startChain(i,'体に敵がぶつかった！');return false}}
+    return true});
+  cands=cands.filter(c=>{
+    if(Math.hypot(c.x-p.x,c.y-p.y)<0.5){gotFriend();checkStuck();return false}
+    return true});
+}
+
+function draw(){
+  const cw=cv.clientWidth,chh=cv.clientHeight,W2=Math.round(cw*dpr),H2=Math.round(chh*dpr);
+  if(cv.width!==W2||cv.height!==H2){cv.width=W2;cv.height=H2}
+  g.setTransform(dpr,0,0,dpr,0,0);
+  // 盤面を画面いっぱいに拡大して中央に置く
+  const S=Math.min(cw/view.w,chh/view.h),u=S/24,sk=shake*u,ox=(cw-view.w*S)/2+(Math.random()*2-1)*sk,oy=(chh-view.h*S)/2+(Math.random()*2-1)*sk;
+  const X=x=>ox+(x-view.x0)*S,Y=y=>oy+(y-view.y0)*S,vw=view.w*S,vh=view.h*S;
+  const F=(px,b)=>(b?'bold ':'')+Math.round(px*chh/480)+'px sans-serif';
+  g.fillStyle='#0d0d12';g.fillRect(0,0,cw,chh);
+  g.save();g.beginPath();g.rect(ox,oy,vw,vh);g.clip();
+  // 背景：侵入不可の外周は少し暗く
+  g.fillStyle='#121218';g.fillRect(ox,oy,vw,vh);
+  g.fillStyle='#1c1c24';g.fillRect(X(B.x0+1),Y(B.y0+1),(B.w-2)*S,(B.h-2)*S);
+  // 穴（自機は入れない）
+  g.globalAlpha=holeT;
+  for(const h of holes){g.fillStyle='#07070b';g.fillRect(X(h.x),Y(h.y),h.s*S,h.s*S)}
+  // 電気柵：穴の縁をバチバチ走る電流
+  const tf=performance.now()/1000/FENCE_PERIOD,tq=Math.floor(tf),tl=tf-tq,te=tl*tl*(3-2*tl);   // 形と形の間をなめらかにつなぐ
+  const fence=(cx,cy,cw0,ch0,seed)=>{   // マス単位の矩形の縁に電気柵を描く
+    const x0=X(cx),y0=Y(cy),W=cw0*S,H=ch0*S,cs=[[x0,y0],[x0+W,y0],[x0+W,y0+H],[x0,y0+H]],ln=[cw0,ch0,cw0,ch0];
+    let sd,sd2;const rnd=()=>{sd=(sd*16807)%2147483647;sd2=(sd2*16807)%2147483647;return (sd/2147483647)*(1-te)+(sd2/2147483647)*te};
+    const path=()=>{g.beginPath();g.moveTo(cs[0][0],cs[0][1]);
+      for(let e=0;e<4;e++){const [ax,ay]=cs[e],[bx,by]=cs[(e+1)%4],m=ln[e]*4,L=Math.hypot(bx-ax,by-ay)||1,nx=-(by-ay)/L,ny=(bx-ax)/L;
+        for(let i=1;i<=m;i++){const t=i/m,j=i<m?(rnd()-0.5)*7*u:0;g.lineTo(ax+(bx-ax)*t+nx*j,ay+(by-ay)*t+ny*j)}}
+      g.stroke()};
+    const seedA=(tq*97+seed)%2147483646+1,seedB=((tq+1)*97+seed)%2147483646+1;
+    sd=seedA;sd2=seedB;g.save();g.lineJoin='round';
+    g.shadowColor='#5ff4ff';g.shadowBlur=FENCE_GLOW*u;g.strokeStyle='rgba(95,244,255,0.55)';g.lineWidth=3*u;path();
+    sd=seedA;sd2=seedB;g.shadowBlur=0;g.strokeStyle='#eaffff';g.lineWidth=Math.max(1,1.5*u);path();
+    g.restore();
+    g.fillStyle='#9aa4b8';for(const [cx0,cy0] of cs)g.fillRect(cx0-3*u,cy0-3*u,6*u,6*u);   // 柵の支柱
+  };
+  for(const h of holes)fence(h.x,h.y,h.s,h.s,h.x*31+h.y*17);
+  g.globalAlpha=1;
+  fence(B.x0+1,B.y0+1,B.w-2,B.h-2,7);   // 外周の侵入不可エリアとの境目も電気柵
+  // グリッド（マスが小さくなるほど線を控えめに）
+  g.globalAlpha=0.35+0.65*Math.min(cell()/24,1);g.strokeStyle='#9be8e2';g.lineWidth=Math.max(1,u);g.beginPath();
+  for(let i=Math.floor(view.x0);i<=Math.ceil(view.x0+view.w);i++){g.moveTo(X(i),oy);g.lineTo(X(i),oy+vh)}
+  for(let j=Math.floor(view.y0);j<=Math.ceil(view.y0+view.h);j++){g.moveTo(ox,Y(j));g.lineTo(ox+vw,Y(j))}
+  g.stroke();g.globalAlpha=1;
+  const cx=x=>X(x)+S/2,cy=y=>Y(y)+S/2;
+  // 爆弾の予告エリアと爆発
+  bombs.forEach(bm=>{if(!bm.done&&bm.t>=bm.fuse-Math.max(BOMB_WARN,bm.fuse*0.3)){g.fillStyle='rgba(255,40,40,'+(0.25+0.2*(Math.floor(bm.ph*2)%2))+')';g.fillRect(X(bm.x-bm.r),Y(bm.y-bm.r),(2*bm.r+1)*S,(2*bm.r+1)*S);g.strokeStyle='#ff4b4b';g.lineWidth=2*u;g.strokeRect(X(bm.x-bm.r),Y(bm.y-bm.r),(2*bm.r+1)*S,(2*bm.r+1)*S)}});
+  blasts.forEach(b=>{g.fillStyle='rgba(255,210,90,'+(b.life/0.4)+')';const s=b.s??1;g.fillRect(X(b.x-s),Y(b.y-s),(2*s+1)*S,(2*s+1)*S)});
+  pulses.forEach(q=>{const a=q.life/0.35;g.strokeStyle='rgba('+(q.col||'94,232,255')+','+a+')';g.lineWidth=4*u;g.beginPath();g.arc(cx(q.x),cy(q.y),(1-a)*(q.R||PULSE_R)*S+S*0.5,0,6.283);g.stroke()});
+  bullets.forEach(b=>{if(b.sp){g.fillStyle=b.col||'#5ee8ff';g.beginPath();g.arc(cx(b.x),cy(b.y),(b.life!==undefined?3.5:4.5)*u,0,6.283);g.fill()}else{const r=(b.dmg>1?4.5:3)*u;g.fillStyle=b.dmg>1?'#ffd400':'#fff';g.fillRect(cx(b.x)-r,cy(b.y)-r,2*r,2*r)}});   // 強化弾は黄色で大きい   // 特殊弾は水色の丸
+  g.strokeStyle='#fff';g.lineWidth=2*u;
+  cands.forEach(c=>g.strokeRect(cx(c.x)-9*u,cy(c.y)-9*u,18*u,18*u));
+  enemies.forEach(e=>{g.strokeStyle='#fff';g.strokeRect(cx(e.x)-9*u,cy(e.y)-9*u,18*u,18*u);const r=(2+3*e.hp/(e.max||ENEMY_HP))*u;g.fillStyle=e.fl>0?'#fff':'#ff4b4b';g.fillRect(cx(e.x)-r,cy(e.y)-r,2*r,2*r)});   // 赤いコアは耐久度に合わせて小さくなる
+  sparks.forEach(s=>{g.fillStyle='rgba(255,255,255,'+Math.max(s.life/0.35,0)+')';g.fillRect(cx(s.x)-2*u,cy(s.y)-2*u,4*u,4*u)});
+  for(let i=0;i<n;i++){const f=fpos(i);if(gone.has(i)||!f)continue;
+    let gl=0;for(const w of waves)gl=Math.max(gl,1-Math.abs(i-w.t*WAVE_SPD)/2.5);   // 光の波／吸収中は全体が黄色く光る
+    const m=(4-3*Math.max(gl,0))*u;g.fillStyle=gl>0?'rgb(255,'+Math.round(255-45*gl)+','+Math.round(255-200*gl)+')':(kind[i]==='c'?TURRET_COL:'#fff');
+    let fx=f.x,fy=f.y;if(slide&&slide.from[i]){const e=1-Math.pow(1-slide.t/SLIDE_DUR,3);fx=slide.from[i].x+(f.x-slide.from[i].x)*e;fy=slide.from[i].y+(f.y-slide.from[i].y)*e}   // 前に詰まる
+    g.fillRect(X(fx)+m,Y(fy)+m,S-2*m,S-2*m)}
+  for(const r of rockets){const sz=S-8*u;g.fillStyle='#fff';g.fillRect(cx(r.x)-sz/2,cy(r.y)-sz/2,sz,sz);g.fillStyle='#ffa31a';g.fillRect(cx(r.x)-sz/4,cy(r.y)+sz/2,sz/2,sz*0.5)}   // 打ち上げ中の体（炎つき）
+  bombs.forEach(bm=>{if(bm.done)return;g.fillStyle=bm.fl>0?'#ff4b4b':(Math.floor(bm.ph*2)%2?'#fff':'#ffd400');g.beginPath();g.arc(cx(bm.x),cy(bm.y),S*(0.2+0.16*bm.hp/BOMB_HP),0,6.283);g.fill()});   // 当たると赤く光り、残り耐久で小さくなる
+  if(!pDead){g.fillStyle='#ffa31a';g.fillRect(X(p.x)+2*u,Y(p.y)+2*u,S-4*u,S-4*u);g.fillStyle='#222';g.fillRect(cx(p.x)-3*u+p.dx*8*u,cy(p.y)-3*u+p.dy*8*u,6*u,6*u)}
+  // 得点ポップアップ
+  g.textAlign='center';g.font='bold '+Math.round(S*0.5)+'px sans-serif';
+  pops.forEach(q=>{const a=q.life/0.8;g.fillStyle='rgba(255,212,0,'+Math.min(1,a*1.5)+')';g.fillText('+'+(q.v||100),cx(q.x),cy(q.y)-(1-a)*S*1.2-S*0.4)});
+  g.restore();
+  if(flash>0){g.fillStyle='rgba(255,255,255,'+(flash*flash*0.9)+')';g.fillRect(0,0,cw,chh)}
+  hSc.textContent='SCORE '+score;hHs.textContent='HI SCORE '+hi;{const a=alertLv();if(a!==hudAlert){hudAlert=a;hLn.innerHTML='ALERT <span style="color:#ff3b3b;letter-spacing:-0.1em">'+'▮'.repeat(Math.min(a,20))+'</span><span style="color:#552222;letter-spacing:-0.1em">'+'▮'.repeat(Math.max(0,20-a))+'</span>'+(a>20?' <span style="color:#ff3b3b">'+a+'</span>':'')}}   // 警戒レベル：赤いメモリが増えていく
+  g.textAlign='center';const mx=cw/2,my=chh/2,h=chh/480;
+  if(exp){g.fillStyle='rgba(0,0,0,.45)';g.fillRect(0,my-28*h,cw,56*h);g.fillStyle='#ffa31a';g.font=F(22,1);g.fillText('エリア拡大！',mx,my+(UP[k].label?-2:8)*h);if(UP[k].label){g.fillStyle='#5ee8ff';g.font=F(13,1);g.fillText(UP[k].label,mx,my+18*h)}}
+  if(paused){g.fillStyle='rgba(0,0,0,.55)';g.fillRect(0,0,cw,chh);g.fillStyle='#fff';g.font=F(40,1);g.fillText('PAUSE',mx,my);g.fillStyle='#aaa';g.font=F(13);g.fillText('ESC / スタートボタンで再開',mx,my+32*h)}
+  if(title){
+    g.fillStyle='rgba(0,0,0,.7)';g.fillRect(0,0,cw,chh);
+    g.fillStyle='#ffa31a';g.font=F(64,1);g.fillText('SNAKE SHOT',mx,my-10*h);
+    g.fillStyle='#fff';g.font=F(16);g.fillText('キー操作 / ゲームパッドでスタート',mx,my+36*h);
+    g.fillStyle='#999';g.font=F(11);g.fillText('矢印/WASD・ゲームパッドで1マス移動　Q/E・LB/RBで向きを回転　押しっぱなしで連続移動　弾は向いている方向へ自動発射　体と敵は通れない',mx,my+70*h);
+    g.fillText('体に敵が当たる・動けなくなる・爆発に巻き込まれるとアウト',mx,my+88*h);
+  }
+  if(over){
+    g.fillStyle='rgba(0,0,0,.6)';g.fillRect(0,my-60*h,cw,120*h);g.fillStyle='#fff';g.font=F(26,1);g.fillText('ゲームオーバー',mx,my-26*h);
+    if(why){g.font=F(13);g.fillStyle='#ffb0b0';g.fillText(why,mx,my-6*h);g.fillStyle='#fff'}
+    g.font=F(18);g.fillText('SCORE '+score+(newHi?'  NEW RECORD!':''),mx,my+18*h);
+    if(overT>0.6){g.font=F(14);g.fillText('キー操作 / ゲームパッドで再開',mx,my+40*h)}
+  }
+  // 音のオン／オフボタン：盤面の右下のマスのすぐ右（余白が足りなければ盤面の右下の角の内側）
+  {const S0=Math.min(cw/view.w,chh/view.h),bx0=(cw+view.w*S0)/2,by0=(chh+view.h*S0)/2,bs=Math.max(26,S0*0.9),gap=bs*0.25;
+   const bx=cw-bx0>=bs+gap*2?bx0+gap:bx0-bs-gap,by=by0-bs;muteBtn={x:bx,y:by,s:bs};
+   g.fillStyle='rgba(255,255,255,0.08)';g.fillRect(bx,by,bs,bs);g.strokeStyle='#9be8e2';g.lineWidth=Math.max(1,bs/24);g.strokeRect(bx,by,bs,bs);
+   const q=bs/24;g.fillStyle='#e6fffd';g.beginPath();g.moveTo(bx+5*q,by+9*q);g.lineTo(bx+9*q,by+9*q);g.lineTo(bx+14*q,by+4.5*q);g.lineTo(bx+14*q,by+19.5*q);g.lineTo(bx+9*q,by+15*q);g.lineTo(bx+5*q,by+15*q);g.closePath();g.fill();
+   g.strokeStyle=muted?'#ff5a5a':'#e6fffd';g.lineWidth=2*q;g.beginPath();
+   if(muted){g.moveTo(bx+16*q,by+9*q);g.lineTo(bx+21*q,by+15*q);g.moveTo(bx+21*q,by+9*q);g.lineTo(bx+16*q,by+15*q)}
+   else{g.arc(bx+14*q,by+12*q,3.5*q,-0.9,0.9);g.moveTo(bx+14*q+6.5*q*Math.cos(-0.9),by+12*q+6.5*q*Math.sin(-0.9));g.arc(bx+14*q,by+12*q,6.5*q,-0.9,0.9)}
+   g.stroke()}
+}
+cv.addEventListener('mousedown',e=>{if(!muteBtn)return;const r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
+  if(x>=muteBtn.x&&x<=muteBtn.x+muteBtn.s&&y>=muteBtn.y&&y<=muteBtn.y+muteBtn.s){audioInit();setMute(!muted)}});
+cv.addEventListener('mousemove',e=>{if(!muteBtn)return;const r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
+  cv.style.cursor=x>=muteBtn.x&&x<=muteBtn.x+muteBtn.s&&y>=muteBtn.y&&y<=muteBtn.y+muteBtn.s?'pointer':'default'});
+let last=performance.now();
+// ゲームパッド：十字キー／左スティックで1回1マス（スティックは中央に戻すまで次の移動なし）、A／スタートで開始・再開
+const padPrev={};let padOK=!!navigator.getGamepads;
+function pollPad(){
+  if(!padOK)return;
+  let pads;try{pads=navigator.getGamepads()}catch(e){padOK=false;return}   // 埋め込み表示などで禁止されている環境ではゲームパッドを無効にする
+  for(const gp of pads){
+    if(!gp)continue;
+    const pr=padPrev[gp.index]||(padPrev[gp.index]={});
+    const press=i=>{const v=!!(gp.buttons[i]&&gp.buttons[i].pressed),r=v&&!pr[i];pr[i]=v;return r};
+    const dir=(dx,dy)=>{if(title){title=false;return}move(dx,dy)};
+    if(gp.buttons.some(b=>b.pressed))audioInit();   // ゲームパッド操作でも音を有効化（ブラウザによっては効かない）
+    if(press(9)){if(title)title=false;else if(over){if(overT>0.6)reset()}else togglePause()}   // スタート：開始・再開・ポーズ
+    if(press(0)){if(title)title=false;else if(over&&overT>0.6)reset()}
+    if(press(4))turn(-1);if(press(5))turn(1);   // LB：左回り / RB：右回り
+    const ax=gp.axes[0]||0,ay=gp.axes[1]||0,m=Math.max(Math.abs(ax),Math.abs(ay));
+    // 今押されている方向（十字キー → スティック → ハットスイッチの順）。押した瞬間に1マス、押し続けると連続移動
+    let hd=null;
+    for(const [i,dx,dy] of [[12,0,-1],[13,0,1],[14,-1,0],[15,1,0]])if(gp.buttons[i]&&gp.buttons[i].pressed){hd=[dx,dy];break}
+    if(!hd&&m>(pr.stick?0.3:0.5)){hd=Math.abs(ax)>Math.abs(ay)?[Math.sign(ax),0]:[0,Math.sign(ay)]}
+    pr.stick=!!hd&&m>0.3;
+    if(!hd&&gp.mapping!=='standard'&&gp.axes.length>9){const v=gp.axes[9];if(Math.abs(v)<=1.05)for(const [t,dx,dy] of [[-1,0,-1],[-0.43,1,0],[0.14,0,1],[0.71,-1,0]])if(Math.abs(v-t)<0.1)hd=[dx,dy]}
+    const hk=hd?hd.join():'';
+    if(hk!==(pr.hold||'')){pr.hold=hk;if(hd){dir(...hd);hold={dx:hd[0],dy:hd[1],t:0,rep:0,key:'pad'+gp.index}}else if(hold&&hold.key==='pad'+gp.index)hold=null}
+  }
+}
+(function loop(now){const dt=Math.min((now-last)/1000,0.05);last=now;pollPad();step(dt);bgmUpdate();draw();requestAnimationFrame(loop)})(last);
+</script></body></html>
