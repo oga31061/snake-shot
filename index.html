@@ -67,7 +67,7 @@ const cell=()=>24*Math.min(W0/B.w,H0/B.h);
 const ring=e=>{const x=Math.round(e.x),y=Math.round(e.y);return x<=B.x0||x>=B.x0+B.w-1||y<=B.y0||y>=B.y0+B.h-1};
 const outside=(o,m)=>o.x<B.x0-m||o.x>B.x0+B.w-1+m||o.y<B.y0-m||o.y>B.y0+B.h-1+m;
 // ---- 効果音（Web Audioで合成。最初のキー入力で有効になる） ----
-let AC=null,master=null,noiseBuf=null,muted=false,muteBtn=null,pauseBtn=null,mobile=false,phoneBtn=null;
+let AC=null,master=null,noiseBuf=null,muted=false,muteBtn=null,pauseBtn=null,mobile=false,phoneBtn=null,phoneBtnT=null,titleBtn=null;
 try{mobile=localStorage.getItem('snakeshot_mobile')==='1'}catch(e){}
 function setMobile(m){mobile=m;try{localStorage.setItem('snakeshot_mobile',m?'1':'0')}catch(e){}}
 try{muted=localStorage.getItem('snakeshot_mute')==='1'}catch(e){}
@@ -392,7 +392,9 @@ function draw(){
   hSc.textContent='SCORE '+score;hHs.textContent='HI SCORE '+hi;{const a=alertLv();if(a!==hudAlert){hudAlert=a;hLn.innerHTML='ALERT <span style="color:#ff3b3b;letter-spacing:-0.1em">'+'▮'.repeat(Math.min(a,20))+'</span><span style="color:#552222;letter-spacing:-0.1em">'+'▮'.repeat(Math.max(0,20-a))+'</span>'+(a>20?' <span style="color:#ff3b3b">'+a+'</span>':'')}}   // 警戒レベル：赤いメモリが増えていく
   g.textAlign='center';const mx=cw/2,my=chh/2,h=chh/480;
   if(exp){g.fillStyle='rgba(0,0,0,.45)';g.fillRect(0,my-28*h,cw,56*h);g.fillStyle='#ffa31a';g.font=F(22,1);g.fillText('エリア拡大！',mx,my+(UP[k].label?-2:8)*h);if(UP[k].label){g.fillStyle='#5ee8ff';g.font=F(13,1);g.fillText(UP[k].label,mx,my+18*h)}}
-  if(paused){g.fillStyle='rgba(0,0,0,.55)';g.fillRect(0,0,cw,chh);g.fillStyle='#fff';g.font=F(40,1);g.fillText('PAUSE',mx,my);g.fillStyle='#aaa';g.font=F(13);g.fillText(mobile?'ポーズボタンで再開':'ESC / スタートボタンで再開',mx,my+32*h)}
+  if(paused){g.fillStyle='rgba(0,0,0,.55)';g.fillRect(0,0,cw,chh);g.fillStyle='#fff';g.font=F(40,1);g.fillText('PAUSE',mx,my);g.fillStyle='#aaa';g.font=F(13);g.fillText(mobile?'ポーズボタンで再開':'ESC / スタートボタンで再開',mx,my+32*h);
+    const tw=150*h,th=36*h,tx=mx-tw/2,ty=my+52*h;titleBtn={x:tx,y:ty,w:tw,h:th};   // タイトルへ戻るボタン
+    g.fillStyle='rgba(255,255,255,0.08)';g.fillRect(tx,ty,tw,th);g.strokeStyle='#9be8e2';g.lineWidth=Math.max(1,1.5*h);g.strokeRect(tx,ty,tw,th);g.fillStyle='#e6fffd';g.font=F(15,1);g.fillText('タイトルへ',mx,ty+th/2+5*h)}
   if(title){
     g.fillStyle='rgba(0,0,0,.7)';g.fillRect(0,0,cw,chh);
     g.fillStyle='#ffa31a';g.font=F(64,1);g.fillText('SNAKE SHOT',mx,my-10*h);
@@ -407,15 +409,21 @@ function draw(){
     if(overT>0.6){g.font=F(20);g.fillText(mobile?'十字ボタンで再開':'キー操作 / ゲームパッドで再開',mx,my+82*h)}
   }
   if(mobile)drawTouch(cw,chh);
-  // タイトル画面：スマホモード切り替えボタン（スマホのアイコン）
-  if(title){const bs=Math.round(46*h),bx=mx-bs/2,by=my+108*h;phoneBtn={x:bx,y:by,w:bs,h:bs};
+  // タイトル画面：スマホ操作の切り替えボタン（右上のボタンと同じ働き）
+  if(title){const bs=Math.round(46*h),bx=mx-bs/2,by=my+108*h;phoneBtnT={x:bx,y:by,w:bs,h:bs};
     g.fillStyle=mobile?'rgba(255,163,26,0.25)':'rgba(255,255,255,0.08)';g.fillRect(bx,by,bs,bs);g.strokeStyle=mobile?'#ffa31a':'#9be8e2';g.lineWidth=Math.max(1,2*h);g.strokeRect(bx,by,bs,bs);
     const pw=bs*0.38,ph=bs*0.64,px=mx-pw/2,py=by+(bs-ph)/2;g.strokeStyle=mobile?'#ffd08a':'#e6fffd';g.lineWidth=Math.max(1.5,2.4*h);g.beginPath();g.roundRect?g.roundRect(px,py,pw,ph,pw*0.18):g.rect(px,py,pw,ph);g.stroke();
-    g.fillStyle=g.strokeStyle;g.fillRect(mx-pw*0.15,py+ph-ph*0.12,pw*0.3,Math.max(1,1.5*h));
+    g.fillStyle=g.strokeStyle;g.fillRect(mx-pw*0.15,py+ph*0.82,pw*0.3,Math.max(1,1.5*h));
     g.textAlign='center';g.font=F(11,1);g.fillStyle=mobile?'#ffa31a':'#999';g.fillText(mobile?'スマホ操作 ON':'スマホ操作 OFF',mx,by+bs+16*h)}
-  // 音のオン／オフボタン：盤面の右下のマスのすぐ右（余白が足りなければ盤面の右下の角の内側）
+  // 音のオン／オフボタン：盤面の右上のすぐ右（余白が足りなければ盤面の角の内側）
   {const L0=layout(cw,chh),S0=L0.S,bx0=L0.ox+view.w*S0,by0=L0.oy+view.h*S0,bs=Math.max(26,S0*0.9),gap=bs*0.25;
-   const bx=cw-bx0>=bs+gap*2?bx0+gap:bx0-bs-gap,by=mobile?L0.oy:by0-bs;muteBtn={x:bx,y:by,s:bs};   // スマホモードでは右下が回転ボタンなので右上へ
+   const bx=cw-bx0>=bs+gap*2?bx0+gap:bx0-bs-gap,by=L0.oy;muteBtn={x:bx,y:by,s:bs};   // 盤面の右上のすぐ右（PC・スマホ共通）
+   // スマホ操作の切り替えボタン：音のボタンの下
+   {const py=by+bs+gap;phoneBtn={x:bx,y:py,w:bs,h:bs};
+    g.fillStyle=mobile?'rgba(255,163,26,0.25)':'rgba(255,255,255,0.08)';g.fillRect(bx,py,bs,bs);g.strokeStyle=mobile?'#ffa31a':'#9be8e2';g.lineWidth=Math.max(1,bs/24);g.strokeRect(bx,py,bs,bs);
+    const pw=bs*0.36,ph=bs*0.62,ppx=bx+(bs-pw)/2,ppy=py+(bs-ph)/2;g.strokeStyle=mobile?'#ffd08a':'#e6fffd';g.lineWidth=Math.max(1.5,bs/14);g.beginPath();g.roundRect?g.roundRect(ppx,ppy,pw,ph,pw*0.18):g.rect(ppx,ppy,pw,ph);g.stroke();
+    g.fillStyle=g.strokeStyle;g.fillRect(bx+bs/2-pw*0.15,ppy+ph*0.82,pw*0.3,Math.max(1,bs/24));
+    if(!mobile){g.strokeStyle='#ff5a5a';g.lineWidth=Math.max(1.5,bs/14);g.beginPath();g.moveTo(bx+bs*0.2,py+bs*0.8);g.lineTo(bx+bs*0.8,py+bs*0.2);g.stroke()}}   // オフのときは斜線
    // ポーズボタン：音のボタンと左右対称の位置（盤面の左側）
    {const px=cw-bx-bs;pauseBtn={x:px,y:by,s:bs};const q=bs/24;
     g.fillStyle=paused?'rgba(255,163,26,0.25)':'rgba(255,255,255,0.08)';g.fillRect(px,by,bs,bs);g.strokeStyle='#9be8e2';g.lineWidth=Math.max(1,bs/24);g.strokeRect(px,by,bs,bs);
@@ -441,7 +449,8 @@ function touchDir(d){padHeld=d?d.join(','):null;if(!d){if(hold&&hold.key==='touc
 cv.addEventListener('pointerdown',e=>{audioInit();const r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
   if(muteBtn&&x>=muteBtn.x&&x<=muteBtn.x+muteBtn.s&&y>=muteBtn.y&&y<=muteBtn.y+muteBtn.s){setMute(!muted);e.preventDefault();return}
   if(pauseBtn&&x>=pauseBtn.x&&x<=pauseBtn.x+pauseBtn.s&&y>=pauseBtn.y&&y<=pauseBtn.y+pauseBtn.s){togglePause();e.preventDefault();return}
-  if(title&&inBox(phoneBtn,x,y)){setMobile(!mobile);e.preventDefault();return}
+  if(inBox(phoneBtn,x,y)||(title&&inBox(phoneBtnT,x,y))){setMobile(!mobile);touchDir(null);rotHeld=0;e.preventDefault();return}
+  if(paused&&inBox(titleBtn,x,y)){paused=false;reset();title=true;e.preventDefault();return}   // ポーズ中：タイトルへ
   if(!mobile)return;e.preventDefault();
   const T=touchLayout(cv.clientWidth,cv.clientHeight);
   if(inBox(T.pad,x,y)){touches[e.pointerId]='pad';try{cv.setPointerCapture(e.pointerId)}catch(_){}touchDir(padDir(T.pad,x,y));return}
@@ -449,7 +458,7 @@ cv.addEventListener('pointerdown',e=>{audioInit();const r=cv.getBoundingClientRe
   if(rd){touches[e.pointerId]='rot';rotHeld=rd;if(title)title=false;else turn(rd)}});
 cv.addEventListener('pointermove',e=>{const r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
   if(touches[e.pointerId]==='pad'){const d=padDir(touchLayout(cv.clientWidth,cv.clientHeight).pad,x,y),k2=d?d.join(','):null;if(k2!==padHeld)touchDir(d);return}   // 指を滑らせて方向を変えられる
-  if(e.pointerType==='mouse'){const on=(muteBtn&&x>=muteBtn.x&&x<=muteBtn.x+muteBtn.s&&y>=muteBtn.y&&y<=muteBtn.y+muteBtn.s)||(pauseBtn&&x>=pauseBtn.x&&x<=pauseBtn.x+pauseBtn.s&&y>=pauseBtn.y&&y<=pauseBtn.y+pauseBtn.s)||(title&&inBox(phoneBtn,x,y));cv.style.cursor=on?'pointer':'default'}});
+  if(e.pointerType==='mouse'){const on=(muteBtn&&x>=muteBtn.x&&x<=muteBtn.x+muteBtn.s&&y>=muteBtn.y&&y<=muteBtn.y+muteBtn.s)||(pauseBtn&&x>=pauseBtn.x&&x<=pauseBtn.x+pauseBtn.s&&y>=pauseBtn.y&&y<=pauseBtn.y+pauseBtn.s)||inBox(phoneBtn,x,y)||(title&&inBox(phoneBtnT,x,y))||(paused&&inBox(titleBtn,x,y));cv.style.cursor=on?'pointer':'default'}});
 const touchEnd=e=>{const t=touches[e.pointerId];delete touches[e.pointerId];if(t==='pad')touchDir(null);if(t==='rot')rotHeld=0};
 cv.addEventListener('pointerup',touchEnd);cv.addEventListener('pointercancel',touchEnd);
 cv.addEventListener('contextmenu',e=>e.preventDefault());
