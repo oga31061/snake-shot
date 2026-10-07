@@ -44,7 +44,7 @@ const HOLES=[[2,4],[2,5],[2,6],[3,4],[3,5],[3,6]],HOLE_SAFE=2;
 const FENCE_PERIOD=0.8,FENCE_GLOW=5;   // FENCE_GLOW：柵のまわりのぼんやりした光の広がり
    // 電気柵の揺らぎ：この秒数かけて次の形へゆっくり変わる
 const SHAKE_KILL=1.5,SHAKE_BOMB=6;   // 画面揺れ：敵を倒したとき／爆弾が爆発したとき（後半は数が多いので控えめ）
-const SLOW_RATE=0.25,SLOW_DUR=1.2;   // やられたときのスローモーション：時間の速さ／自機がやられてから元に戻るまでの秒数（連鎖爆発中もずっとスロー）
+const SLOW_RATE=0.15,SLOW_DUR=1.6;   // やられたときのスローモーション：時間の速さ／自機がやられてから元に戻るまでの秒数（連鎖爆発そのものは普通の速さ）
 const WAVE_SPD=40;                  // 拾ったときの光の波が体を流れる速さ（機/秒）
 const BOMB_INT=10,BOMB_FUSE=5,BOMB_WARN=1.5; // 爆弾：10秒ごとに出現／5秒で爆発／最後の1.5秒は赤い予告エリア
 const BOMB_R=2,BOMB_R_WAVE=1;        // 爆発範囲：最初は中心から2マス（5×5）。ウェーブ（エリア拡大）ごとに1マス広がる（出現時に決まる）
@@ -94,9 +94,9 @@ const BGM_FILE='bgm.mp3',BGM_VOL=0.5;
 const bgm=new Audio(BGM_FILE);bgm.loop=true;bgm.volume=BGM_VOL;bgm.preload='auto';bgm.muted=muted;
 let bgmOn=false,bgmWasOver=false;
 function bgmUpdate(){
-  const play=!title&&!over&&!paused;
+  const play=!title&&!paused&&!over&&!chain;   // やられた瞬間（連鎖爆発の始まり）から無音
   if(play&&!bgmOn){if(bgmWasOver)bgm.currentTime=0;bgm.play().catch(()=>{});bgmOn=true;bgmWasOver=false}   // ファイルが無いときは無音のまま
-  else if(!play&&bgmOn){bgm.pause();bgmOn=false;if(over||title)bgmWasOver=true}
+  else if(!play&&bgmOn){bgm.pause();bgmOn=false;if(over||title||chain)bgmWasOver=true}
 }
 let lastPop=0,slowT=0,wasOver=false,rdt=0;
 const SE={
@@ -211,7 +211,7 @@ function step(dt){
   sparks.forEach(s=>{s.x+=s.vx*dt;s.y+=s.vy*dt;s.life-=dt});sparks=sparks.filter(s=>s.life>0);
   blasts.forEach(b=>b.life-=dt);blasts=blasts.filter(b=>b.life>0);
   holeT=Math.min(1,holeT+dt/0.6);
-  flash=Math.max(0,flash-rdt/0.45);   // 自機がやられたときの画面フラッシュ（0.45秒で消える）
+  flash=Math.max(0,flash-dt/0.45);   // 自機がやられたときの画面フラッシュ（ゲーム内時間で0.45秒。スロー中はゆっくり消える）
   if(!paused){   // 打ち上げ演出はエリア拡大の一時停止中も動く
     for(const r of rockets){if(r.delay>0){r.delay-=dt;continue}r.vy-=LAUNCH_ACC*dt;r.y+=r.vy*dt;if(Math.random()<0.6)sparks.push({x:r.x+(Math.random()-0.5)*0.3,y:r.y+0.5,vx:(Math.random()-0.5)*2,vy:3+Math.random()*3,life:0.3})}
     rockets=rockets.filter(r=>r.y>view.y0-3);
@@ -442,5 +442,5 @@ function pollPad(){
 }
 (function loop(now){const dt=Math.min((now-last)/1000,0.05);last=now;pollPad();rdt=dt;
   if(over&&!wasOver)slowT=SLOW_DUR;wasOver=over;   // やられた瞬間からスロー
-  const sc=(chain||slowT>0)?SLOW_RATE:1;if(slowT>0)slowT-=dt;step(dt*sc);bgmUpdate();draw();requestAnimationFrame(loop)})(last);
+  const sc=slowT>0?SLOW_RATE:1;if(slowT>0)slowT-=dt;step(dt*sc);bgmUpdate();draw();requestAnimationFrame(loop)})(last);
 </script></body></html>
