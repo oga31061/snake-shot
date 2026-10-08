@@ -8,9 +8,14 @@ body{display:flex;flex-direction:column}
 #hud{position:absolute;z-index:1;pointer-events:none;top:0;left:0;box-sizing:border-box;display:flex;justify-content:space-between;align-items:center;padding:0.6vh 0.4em;gap:1.5em;white-space:nowrap;font-size:clamp(12px,min(3.4vh,1.9vw),44px);font-weight:bold;font-variant-numeric:tabular-nums;letter-spacing:0.05em}
 #hud span:first-child{color:#ffa31a}
 canvas{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;-webkit-touch-callout:none}
+#volBg{position:fixed;inset:0;z-index:5;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45)}
+#vol{background:#14141c;border:2px solid #9be8e2;padding:22px 28px;min-width:300px;font-weight:bold;color:#e6fffd;font-size:18px}
+#vol .row{display:flex;align-items:center;gap:14px;margin:12px 0}#vol .row span:first-child{width:5.5em}#vol .row span:last-child{width:3.2em;text-align:right;font-variant-numeric:tabular-nums}
+#vol input{flex:1;accent-color:#5ff4ff;height:28px}#vol button{display:block;margin:16px auto 0;background:#1f2a2c;color:#e6fffd;border:1.5px solid #9be8e2;font:inherit;font-size:16px;padding:6px 26px;cursor:pointer}
 </style></head><body>
 <div id="hud"><span id="sc">SCORE 0</span><span id="hs">HI SCORE 0</span><span id="ln">ALERT</span></div>
 <canvas id="c"></canvas>
+<div id="volBg"><div id="vol"><div class="row"><span>BGM</span><input id="vBgm" type="range" min="0" max="100" step="5"><span id="vBgmT"></span></div><div class="row"><span>効果音</span><input id="vSe" type="range" min="0" max="100" step="5"><span id="vSeT"></span></div><button id="vClose">閉じる</button></div></div>
 <script>
 // ---- 定数 ----
 const TH=[8,20,28,34,80];           // 拡張する長さ（間隔を徐々に広げて密度をゆるやかに上げる）
@@ -69,13 +74,16 @@ const cell=()=>24*Math.min(W0/B.w,H0/B.h);
 const ring=e=>{const x=Math.round(e.x),y=Math.round(e.y);return x<=B.x0||x>=B.x0+B.w-1||y<=B.y0||y>=B.y0+B.h-1};
 const outside=(o,m)=>o.x<B.x0-m||o.x>B.x0+B.w-1+m||o.y<B.y0-m||o.y>B.y0+B.h-1+m;
 // ---- 効果音（Web Audioで合成。最初のキー入力で有効になる） ----
-let AC=null,master=null,noiseBuf=null,muted=false,muteBtn=null,pauseBtn=null,mobile=false,phoneBtn=null,phoneBtnT=null,titleBtn=null;
+let AC=null,master=null,noiseBuf=null,volBgm=50,volSe=50,volOpen=false,volPaused=false,muteBtn=null,pauseBtn=null,mobile=false,phoneBtn=null,phoneBtnT=null,titleBtn=null;
 try{mobile=localStorage.getItem('snakeshot_mobile')==='1'}catch(e){}
 function setMobile(m){mobile=m;try{localStorage.setItem('snakeshot_mobile',m?'1':'0')}catch(e){}}
-try{muted=localStorage.getItem('snakeshot_mute')==='1'}catch(e){}
-function setMute(m){muted=m;if(master)master.gain.value=m?0:0.35;if(typeof bgm!=='undefined')bgm.muted=m;try{localStorage.setItem('snakeshot_mute',m?'1':'0')}catch(e){}}
+// 音量：BGM と効果音を別々に 0〜100%（ブラウザに保存）。効果音100%で master SE_MAX（リミッターで音割れを防ぐ）
+const SE_MAX=1.6,BGM_MAX=0.5;   // BGM 100% で再生音量 0.5
+try{const v=JSON.parse(localStorage.getItem('snakeshot_vol3')||'null');if(v){volBgm=v.b;volSe=v.s}}catch(e){}
+const seGain=()=>SE_MAX*volSe/100;
+function applyVol(){if(master)master.gain.value=seGain();if(typeof bgm!=='undefined')bgm.volume=BGM_MAX*volBgm/100;try{localStorage.setItem('snakeshot_vol3',JSON.stringify({b:volBgm,s:volSe}))}catch(e){}}
 function audioInit(){
-  if(!AC){try{AC=new (window.AudioContext||window.webkitAudioContext)();master=AC.createGain();master.gain.value=muted?0:0.35;master.connect(AC.destination)}catch(e){AC=null}}
+  if(!AC){try{AC=new (window.AudioContext||window.webkitAudioContext)();master=AC.createGain();master.gain.value=seGain();const lim=AC.createDynamicsCompressor();lim.threshold.value=-10;lim.knee.value=6;lim.ratio.value=12;lim.attack.value=0.003;lim.release.value=0.15;master.connect(lim);lim.connect(AC.destination)}catch(e){AC=null}}
   if(AC&&AC.state==='suspended')AC.resume().catch(()=>{});
 }
 function tone(f,dur,type,vol,f2){
@@ -94,8 +102,8 @@ function noise(dur,vol,fc){
   src.connect(f);f.connect(gn);gn.connect(master);src.start(t);src.stop(t+dur+0.02);
 }
 // ===== BGM：同じフォルダの bgm.mp3 をループ再生（音量50%）。プレイ中だけ鳴り、ポーズ・ゲームオーバー・タイトルでは止まる =====
-const BGM_FILE='bgm.mp3',BGM_VOL=0.5;
-const bgm=new Audio(BGM_FILE);bgm.loop=true;bgm.volume=BGM_VOL;bgm.preload='auto';bgm.muted=muted;
+const BGM_FILE='bgm.mp3';
+const bgm=new Audio(BGM_FILE);bgm.loop=true;bgm.volume=BGM_MAX*volBgm/100;bgm.preload='auto';
 let bgmOn=false,bgmWasOver=false;
 function bgmUpdate(){
   const play=!title&&!paused&&!over&&!chain;   // やられた瞬間（連鎖爆発の始まり）から無音
@@ -222,6 +230,7 @@ const HOLD_DELAY=0.22,HOLD_RATE=9;
 addEventListener('keyup',e=>{if(hold&&hold.key===e.key)hold=null});
 addEventListener('blur',()=>{hold=null});
 addEventListener('keydown',e=>{audioInit();if(e.repeat){e.preventDefault();return}   // OSのキーリピートは使わない（連続移動は自前で制御）
+  if(volOpen){if(e.key=='Escape'){e.preventDefault();closeVol()}return}   // 音量パネル表示中はゲームの操作を受け付けない
   if(e.key=='Escape'){e.preventDefault();togglePause();return}
   if(!title){const k2=e.key.toLowerCase();if(k2=='q'||k2=='e'){e.preventDefault();turn(k2=='e'?1:-1);return}}   // Q：左回り / E：右回り
   if(title){e.preventDefault();title=false;return}const m={ArrowUp:[0,-1],w:[0,-1],ArrowDown:[0,1],s:[0,1],ArrowLeft:[-1,0],a:[-1,0],ArrowRight:[1,0],d:[1,0]}[e.key];if(m){e.preventDefault();move(...m);hold={dx:m[0],dy:m[1],t:0,rep:0,key:e.key}}});
@@ -440,10 +449,10 @@ function draw(){
     g.fillStyle='#e6fffd';if(paused){g.beginPath();g.moveTo(px+8*q,by+5*q);g.lineTo(px+19*q,by+12*q);g.lineTo(px+8*q,by+19*q);g.closePath();g.fill()}else{g.fillRect(px+7*q,by+5*q,3.5*q,14*q);g.fillRect(px+13.5*q,by+5*q,3.5*q,14*q)}}
    g.fillStyle='rgba(255,255,255,0.08)';g.fillRect(bx,by,bs,bs);g.strokeStyle='#9be8e2';g.lineWidth=Math.max(1,bs/24);g.strokeRect(bx,by,bs,bs);
    const q=bs/24;g.fillStyle='#e6fffd';g.beginPath();g.moveTo(bx+5*q,by+9*q);g.lineTo(bx+9*q,by+9*q);g.lineTo(bx+14*q,by+4.5*q);g.lineTo(bx+14*q,by+19.5*q);g.lineTo(bx+9*q,by+15*q);g.lineTo(bx+5*q,by+15*q);g.closePath();g.fill();
-   g.strokeStyle=muted?'#ff5a5a':'#e6fffd';g.lineWidth=2*q;g.beginPath();
+   {const muted=volBgm==0&&volSe==0;g.strokeStyle=muted?'#ff5a5a':'#e6fffd';g.lineWidth=2*q;g.beginPath();
    if(muted){g.moveTo(bx+16*q,by+9*q);g.lineTo(bx+21*q,by+15*q);g.moveTo(bx+21*q,by+9*q);g.lineTo(bx+16*q,by+15*q)}
    else{g.arc(bx+14*q,by+12*q,3.5*q,-0.9,0.9);g.moveTo(bx+14*q+6.5*q*Math.cos(-0.9),by+12*q+6.5*q*Math.sin(-0.9));g.arc(bx+14*q,by+12*q,6.5*q,-0.9,0.9)}
-   g.stroke()}
+   g.stroke()}}
 }
 // ===== スマホモード：タイトル画面のスマホボタンで切り替え。十字（左下）と回転ボタン（右下）を画面に重ねて表示 =====
 const inBox=(b,x,y)=>b&&x>=b.x&&x<=b.x+b.w&&y>=b.y&&y<=b.y+b.h;
@@ -457,7 +466,7 @@ const touches={};let padHeld=null,rotHeld=0;
 function touchDir(d){padHeld=d?d.join(','):null;if(!d){if(hold&&hold.key==='touch')hold=null;return}
   if(title){title=false;return}move(d[0],d[1]);hold={dx:d[0],dy:d[1],t:0,rep:0,key:'touch'}}
 cv.addEventListener('pointerdown',e=>{audioInit();const r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
-  if(muteBtn&&x>=muteBtn.x&&x<=muteBtn.x+muteBtn.s&&y>=muteBtn.y&&y<=muteBtn.y+muteBtn.s){setMute(!muted);e.preventDefault();return}
+  if(muteBtn&&x>=muteBtn.x&&x<=muteBtn.x+muteBtn.s&&y>=muteBtn.y&&y<=muteBtn.y+muteBtn.s){openVol();e.preventDefault();return}
   if(pauseBtn&&x>=pauseBtn.x&&x<=pauseBtn.x+pauseBtn.s&&y>=pauseBtn.y&&y<=pauseBtn.y+pauseBtn.s){togglePause();e.preventDefault();return}
   if(inBox(phoneBtn,x,y)||(title&&inBox(phoneBtnT,x,y))){setMobile(!mobile);touchDir(null);rotHeld=0;e.preventDefault();return}
   if(paused&&inBox(titleBtn,x,y)){paused=false;reset();title=true;e.preventDefault();return}   // ポーズ中：タイトルへ
@@ -487,10 +496,20 @@ function drawTouch(cw,chh){
   }
   g.restore();
 }
+// ===== 音量パネル：音のボタンで画面中央に開く。BGM・効果音を別々に調整。プレイ中なら開いている間はポーズ =====
+const volBg=document.getElementById('volBg'),vBgm=document.getElementById('vBgm'),vSe=document.getElementById('vSe');
+function volText(){document.getElementById('vBgmT').textContent=volBgm+'%';document.getElementById('vSeT').textContent=volSe+'%'}
+function openVol(){audioInit();if(volOpen)return;volOpen=true;vBgm.value=volBgm;vSe.value=volSe;volText();volBg.style.display='flex';
+  volPaused=!title&&!over&&!paused&&!chain;if(volPaused)paused=true;hold=null}
+function closeVol(){if(!volOpen)return;volOpen=false;volBg.style.display='none';if(volPaused&&paused)paused=false;volPaused=false}
+vBgm.addEventListener('input',()=>{volBgm=+vBgm.value;applyVol();volText()});
+vSe.addEventListener('input',()=>{volSe=+vSe.value;applyVol();volText();tone(880,0.06,'square',0.12)});   // 効果音の大きさを試し聞き
+document.getElementById('vClose').addEventListener('click',closeVol);
+volBg.addEventListener('pointerdown',e=>{if(e.target===volBg)closeVol()});   // パネルの外を押しても閉じる
 let last=performance.now();
 // ゲームパッド：十字キー／左スティックで1回1マス（スティックは中央に戻すまで次の移動なし）、A／スタートで開始・再開
 const padPrev={};let padOK=!!navigator.getGamepads;
-function pollPad(){
+function pollPad(){if(volOpen)return;   // 音量パネル表示中はパッド操作を受け付けない
   if(!padOK)return;
   let pads;try{pads=navigator.getGamepads()}catch(e){padOK=false;return}   // 埋め込み表示などで禁止されている環境ではゲームパッドを無効にする
   for(const gp of pads){
