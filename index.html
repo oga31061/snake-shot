@@ -23,7 +23,7 @@ const BULLET_PX=336;                // 弾速 px/秒
 // 警戒レベル（ALERT）：表示のみ。拾った数5個ごとに1つ上がる（敵の速さ・出現間隔は拾った数で強くなっていくので、その目安）。20で敵の速さ・出現間隔が最大
 const ALERT_EVERY=5;
 const alertLv=()=>Math.floor(got/ALERT_EVERY);
-const MAG_ACC=30,MAG_MAX=16;        // 候補の吸い寄せ：加速度(マス/秒²)・最高速(マス/秒)。倒した直後はゆっくり、だんだん速く
+const MAG_WAIT=0.3,MAG_ACC=120,MAG_MAX=40;        // 候補の吸い寄せ：加速度(マス/秒²)・最高速(マス/秒)。倒した直後はゆっくり、だんだん速く
 // 5機ごとの追従機（水色）が、一番近い敵を追尾する弾を自動で撃つ。弾は体をすり抜ける
 const TURRET_EVERY=5,TURRET_IV=1.0,TURRET_COL='#5ee8ff';
 // 自機の通常弾の強化：エリア拡大ごとに1段階
@@ -120,7 +120,7 @@ const addShake=v=>{shake=Math.max(shake,v)};
 function damage(e,d,hx,hy){
   const j=enemies.indexOf(e);if(j<0)return;
   e.hp-=d;e.fl=0.08;
-  if(e.hp<=0){cands.push({x:e.x,y:e.y,dx:e.dx,dy:e.dy});burst(e.x,e.y);   // レア敵は強化アイテムを落とす
+  if(e.hp<=0){cands.push({x:e.x,y:e.y,dx:e.dx,dy:e.dy});burst(e.x,e.y);
     enemies.splice(j,1);SE.conv();hitStop=0.05;addShake(SHAKE_KILL)}
   else{SE.hit();for(let i=0;i<3;i++){const a=Math.random()*6.28;sparks.push({x:hx,y:hy,vx:Math.cos(a)*2,vy:Math.sin(a)*2,life:0.15})}}
 }
@@ -159,6 +159,17 @@ function placeHoles(){
   }
 }
 const isHole=(x,y)=>holeSet.has(x+','+y);
+// 電気柵の線分（マスの辺）と角の支柱。盤面や穴が変わったときだけ計算し直す
+let fenceCache={key:'',edges:[],posts:[]};
+function fenceEdges(){
+  const key=B.x0+','+B.y0+','+B.w+','+B.h+'|'+holes.map(h=>h.x+','+h.y+','+h.s).join(';');if(fenceCache.key===key)return fenceCache;
+  const edges=[],vh=new Map(),bl=(x,y)=>wallAt(x,y)||isHole(x,y),mark=(x,y,b)=>{const k=x+','+y,v=vh.get(k)||0;vh.set(k,v|b)};
+  const add=(ax,ay,bx,by)=>{edges.push([ax,ay,bx,by]);const b=ay===by?1:2;mark(ax,ay,b);mark(bx,by,b)};
+  for(let x=B.x0+1;x<=B.x0+B.w-2;x++)for(let y=B.y0+1;y<=B.y0+B.h-2;y++){if(isHole(x,y))continue;
+    if(bl(x,y-1))add(x,y,x+1,y);if(bl(x,y+1))add(x,y+1,x+1,y+1);if(bl(x-1,y))add(x,y,x,y+1);if(bl(x+1,y))add(x+1,y,x+1,y+1)}
+  const posts=[];for(const [k,v] of vh)if(v===3)posts.push(k.split(',').map(Number));
+  return fenceCache={key,edges,posts};
+}
 // 白い体を打ち上げ、水色の追従機だけを前に詰める
 function launch(){
   const keep=[],from=[];let j=0;
@@ -222,7 +233,8 @@ function step(dt){
     for(const r of rockets){if(r.delay>0){r.delay-=dt;continue}r.vy-=LAUNCH_ACC*dt;r.y+=r.vy*dt;if(Math.random()<0.6)sparks.push({x:r.x+(Math.random()-0.5)*0.3,y:r.y+0.5,vx:(Math.random()-0.5)*2,vy:3+Math.random()*3,life:0.3})}
     rockets=rockets.filter(r=>r.y>view.y0-3);
     if(slide){slide.t+=dt;if(slide.t>=SLIDE_DUR)slide=null}}
-  shake=Math.max(0,shake-dt*40);pops.forEach(q=>q.life-=dt);pulses.forEach(q=>q.life-=dt);pulses=pulses.filter(q=>q.life>0);pops=pops.filter(q=>q.life>0);
+  shake=Math.max(0,shake-dt*40);pops.forEach(q=>q.life-=dt);
+  pulses.forEach(q=>q.life-=dt);pulses=pulses.filter(q=>q.life>0);pops=pops.filter(q=>q.life>0);
   waves.forEach(w=>w.t+=dt);waves=waves.filter(w=>w.t*WAVE_SPD<n+3);
   if(title||paused)return;
   // 連鎖爆発：やられた体から自機へ向かって順に爆発 → 最後に自機 → ゲームオーバー（全体で0.5秒ほど）
@@ -302,7 +314,7 @@ function sub(dt){
   // 敵は自機の1マス手前でその場にピタッと止まる（押し戻しはしない）。自機がどけばまた進む
   enemies.forEach(e=>{let st=speed*dt;const onLine=e.dx?Math.round(e.y)==p.y:Math.round(e.x)==p.x,ahead=e.dx?(p.x-e.x)*e.dx:(p.y-e.y)*e.dy;
     if(onLine&&ahead>=0)st=Math.max(0,Math.min(st,ahead-1));
-    e.x+=e.dx*st;e.y+=e.dy*st;e.fl-=dt;if(e.kb){e.x=Math.max(B.x0+1,Math.min(B.x0+B.w-2,e.x+e.kb.vx*dt));e.y=Math.max(B.y0+1,Math.min(B.y0+B.h-2,e.y+e.kb.vy*dt));e.kb.t-=dt;if(e.kb.t<=0)e.kb=null}});cands.forEach(c=>{c.v=Math.min((c.v||0)+MAG_ACC*dt,MAG_MAX);const ddx=p.x-c.x,ddy=p.y-c.y,d=Math.hypot(ddx,ddy)||1,st=Math.min(c.v*dt,d);c.x+=ddx/d*st;c.y+=ddy/d*st});   // 自機に吸い寄せられる
+    e.x+=e.dx*st;e.y+=e.dy*st;e.fl-=dt;if(e.kb){e.x=Math.max(B.x0+1,Math.min(B.x0+B.w-2,e.x+e.kb.vx*dt));e.y=Math.max(B.y0+1,Math.min(B.y0+B.h-2,e.y+e.kb.vy*dt));e.kb.t-=dt;if(e.kb.t<=0)e.kb=null}});cands.forEach(c=>{c.w=(c.w||0)+dt;if(c.w<MAG_WAIT)return;c.v=Math.min((c.v||0)+MAG_ACC*dt,MAG_MAX);const ddx=p.x-c.x,ddy=p.y-c.y,d=Math.hypot(ddx,ddy)||1,st=Math.min(c.v*dt,d);c.x+=ddx/d*st;c.y+=ddy/d*st});   // その場に少し残ってから、自機へ素早く吸い寄せられる
   // 弾の判定
   bullets=bullets.filter(b=>{
     if(outside(b,1)||(b.life!==undefined&&b.life<=0))return false;   // 射程の切れた弾は消える
@@ -344,23 +356,18 @@ function draw(){
   for(const h of holes){g.fillStyle='#07070b';g.fillRect(X(h.x),Y(h.y),h.s*S,h.s*S)}
   // 電気柵：穴の縁をバチバチ走る電流
   const tf=performance.now()/1000/FENCE_PERIOD,tq=Math.floor(tf),tl=tf-tq,te=tl*tl*(3-2*tl);   // 形と形の間をなめらかにつなぐ
-  const fence=(cx,cy,cw0,ch0,seed)=>{   // マス単位の矩形の縁に電気柵を描く
-    const x0=X(cx),y0=Y(cy),W=cw0*S,H=ch0*S,cs=[[x0,y0],[x0+W,y0],[x0+W,y0+H],[x0,y0+H]],ln=[cw0,ch0,cw0,ch0];
-    let sd,sd2;const rnd=()=>{sd=(sd*16807)%2147483647;sd2=(sd2*16807)%2147483647;return (sd/2147483647)*(1-te)+(sd2/2147483647)*te};
-    const path=()=>{g.beginPath();g.moveTo(cs[0][0],cs[0][1]);
-      for(let e=0;e<4;e++){const [ax,ay]=cs[e],[bx,by]=cs[(e+1)%4],m=ln[e]*4,L=Math.hypot(bx-ax,by-ay)||1,nx=-(by-ay)/L,ny=(bx-ax)/L;
-        for(let i=1;i<=m;i++){const t=i/m,j=i<m?(rnd()-0.5)*7*u:0;g.lineTo(ax+(bx-ax)*t+nx*j,ay+(by-ay)*t+ny*j)}}
+  // 侵入不可（外周・穴）と通れるマスの境目をすべて1本の柵として描く。穴が外周にくっついていれば、柵も外側へ回り込んで一続きになる
+  {const F0=fenceEdges(),hn=a=>{const v=Math.sin(a)*43758.5453;return v-Math.floor(v)};
+    const path=()=>{g.beginPath();for(const [ax,ay,bx,by] of F0.edges){const sd=ax*73.13+ay*19.71+(ax===bx?5.37:0),sA=sd+tq*13.37,sB=sd+(tq+1)*13.37,nx=ay===by?0:1,ny=ay===by?1:0;
+        const x0=X(ax),y0=Y(ay),x1=X(bx),y1=Y(by);g.moveTo(x0,y0);
+        for(let i=1;i<=4;i++){const t=i/4,jj=i<4?((hn(sA+i)*(1-te)+hn(sB+i)*te)-0.5)*7*u:0;g.lineTo(x0+(x1-x0)*t+nx*jj,y0+(y1-y0)*t+ny*jj)}}
       g.stroke()};
-    const seedA=(tq*97+seed)%2147483646+1,seedB=((tq+1)*97+seed)%2147483646+1;
-    sd=seedA;sd2=seedB;g.save();g.lineJoin='round';
+    g.save();g.lineJoin='round';g.lineCap='round';
     g.shadowColor='#5ff4ff';g.shadowBlur=FENCE_GLOW*u;g.strokeStyle='rgba(95,244,255,0.55)';g.lineWidth=3*u;path();
-    sd=seedA;sd2=seedB;g.shadowBlur=0;g.strokeStyle='#eaffff';g.lineWidth=Math.max(1,1.5*u);path();
-    g.restore();
-    g.fillStyle='#9aa4b8';for(const [cx0,cy0] of cs)g.fillRect(cx0-3*u,cy0-3*u,6*u,6*u);   // 柵の支柱
-  };
-  for(const h of holes)fence(h.x,h.y,h.s,h.s,h.x*31+h.y*17);
-  g.globalAlpha=1;
-  fence(B.x0+1,B.y0+1,B.w-2,B.h-2,7);   // 外周の侵入不可エリアとの境目も電気柵
+    g.shadowBlur=0;g.strokeStyle='#eaffff';g.lineWidth=Math.max(1,1.5*u);path();
+    g.restore();g.globalAlpha=1;
+    g.fillStyle='#9aa4b8';for(const [px,py] of F0.posts)g.fillRect(X(px)-3*u,Y(py)-3*u,6*u,6*u);   // 柵の支柱（角だけ）
+  }
   // グリッド（マスが小さくなるほど線を控えめに）
   g.globalAlpha=0.35+0.65*Math.min(cell()/24,1);g.strokeStyle='#9be8e2';g.lineWidth=Math.max(1,u);g.beginPath();
   for(let i=Math.floor(view.x0);i<=Math.ceil(view.x0+view.w);i++){g.moveTo(X(i),oy);g.lineTo(X(i),oy+vh)}
@@ -386,7 +393,7 @@ function draw(){
   if(!pDead){g.fillStyle='#ffa31a';g.fillRect(X(p.x)+2*u,Y(p.y)+2*u,S-4*u,S-4*u);g.fillStyle='#222';g.fillRect(cx(p.x)-3*u+p.dx*8*u,cy(p.y)-3*u+p.dy*8*u,6*u,6*u)}
   // 得点ポップアップ
   g.textAlign='center';g.font='bold '+Math.round(Math.max(S*0.8,18))+'px sans-serif';
-  pops.forEach(q=>{const a=q.life/0.8;g.fillStyle='rgba(255,212,0,'+Math.min(1,a*1.5)+')';g.fillText('+'+(q.v||100),cx(q.x),cy(q.y)-(1-a)*S*1.4-S*0.6)});
+  {const so=Math.max(2,S*0.06);pops.forEach(q=>{const a=q.life/0.8,al=Math.min(1,a*1.5),t='+'+(q.v||100),x=cx(q.x),y=cy(q.y)-(1-a)*S*1.4-S*0.6;g.fillStyle='rgba(0,0,0,'+(al*0.75)+')';g.fillText(t,x+so,y+so);g.fillStyle='rgba(255,212,0,'+al+')';g.fillText(t,x,y)})}
   g.restore();
   if(flash>0){g.fillStyle='rgba(255,255,255,'+(flash*flash*0.9)+')';g.fillRect(0,0,cw,chh)}
   hSc.textContent='SCORE '+score;hHs.textContent='HI SCORE '+hi;{const a=alertLv();if(a!==hudAlert){hudAlert=a;hLn.innerHTML='ALERT <span style="color:#ff3b3b;letter-spacing:-0.1em">'+'▮'.repeat(Math.min(a,20))+'</span><span style="color:#552222;letter-spacing:-0.1em">'+'▮'.repeat(Math.max(0,20-a))+'</span>'+(a>20?' <span style="color:#ff3b3b">'+a+'</span>':'')}}   // 警戒レベル：赤いメモリが増えていく
