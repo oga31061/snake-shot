@@ -13,7 +13,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block;touch-acti
 <canvas id="c"></canvas>
 <script>
 // ---- 定数 ----
-const TH=[8,20,36,56,80];           // 拡張する長さ（間隔を徐々に広げて密度をゆるやかに上げる）
+const TH=[8,20,28,34,80];           // 拡張する長さ（間隔を徐々に広げて密度をゆるやかに上げる）
 const ENEMY_HP=5;                   // 敵の耐久度：最初5、ウェーブごとの増え方を+2,+3,+4,+5…と大きくする（5→7→10→14→19→25）
 const waveHP=k=>ENEMY_HP+k*(k+3)/2;
 const DENS_AREA_EXP=0.75;           // 盤面が広がった分だけ出現数を増やす（面積比の0.75乗）。広がっても密度が薄まらないように
