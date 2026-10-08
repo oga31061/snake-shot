@@ -47,6 +47,7 @@ const SHAKE_KILL=1.5,SHAKE_BOMB=6;   // 画面揺れ：敵を倒したとき／�
 const SLOW_RATE=0.15,SLOW_DUR=1.6;   // やられたときのスローモーション：時間の速さ／自機がやられてから元に戻るまでの秒数（連鎖爆発そのものは普通の速さ）
 const WAVE_SPD=40;                  // 拾ったときの光の波が体を流れる速さ（機/秒）
 const BOMB_INT=10,BOMB_FUSE=5,BOMB_WARN=1.5; // 爆弾：10秒ごとに出現／5秒で爆発／最後の1.5秒は赤い予告エリア
+const BOMB_CENTER=0.25;   // 中央寄りに出る確率（ウェーブ5でこの値、ウェーブ0は0。ウェーブ数に比例）
 const BOMB_R=2,BOMB_R_WAVE=1;        // 爆発範囲：最初は中心から2マス（5×5）。ウェーブ（エリア拡大）ごとに1マス広がる（出現時に決まる）
 const BOMB_PTS=150;                 // 爆弾を壊したときの得点
 const BOMB_HP=3;                    // 爆弾は自機の通常弾3発で壊せる（爆発しないで消える）
@@ -268,7 +269,8 @@ function sub(dt){
   // 爆弾：自機と重ならない位置に出現 → 点滅がだんだん速く → 周囲8マスに予告 → 爆発
   bombT-=dt;if(bombT<=0){for(let i=0;i<=k;i++)bombQ.push(i*BOMB_GAP);bombT=BOMB_INT}   // ウェーブ数+1個を少しずつずらして出す
   bombQ=bombQ.map(t=>t-dt).filter(t=>{if(t>0)return true;
-    let x,y,tries=0;do{x=B.x0+1+Math.floor(Math.random()*(B.w-2));y=B.y0+1+Math.floor(Math.random()*(B.h-2))}while(((x==p.x&&y==p.y)||bombs.some(b=>b.x==x&&b.y==y)||trail.slice(0,n).some(f=>f&&f.x==x&&f.y==y))&&++tries<200);   // 自機・体・ほかの爆弾と重ならない位置
+    let x,y,tries=0;const ctr=Math.random()<BOMB_CENTER*k/5,rr=()=>ctr?(Math.random()+Math.random())/2:Math.random();   // 後半ほど少しだけ中央寄り（2つの乱数の平均で真ん中が出やすい）
+    do{x=B.x0+1+Math.floor(rr()*(B.w-2));y=B.y0+1+Math.floor(rr()*(B.h-2))}while(((x==p.x&&y==p.y)||bombs.some(b=>b.x==x&&b.y==y)||trail.slice(0,n).some(f=>f&&f.x==x&&f.y==y))&&++tries<200);   // 自機・体・ほかの爆弾と重ならない位置
     bombs.push({x,y,r:BOMB_R+BOMB_R_WAVE*k,t:0,ph:0,hp:BOMB_HP,fl:0,fuse:BOMB_FUSE+n*BOMB_FUSE_PER});return false});
   for(const bm of bombs){
     if(bm.done)continue;bm.fl-=dt;bm.t+=dt;const r=bm.t/bm.fuse;bm.ph+=dt*(1+7*r*r);   // 点滅 1回/秒 → 8回/秒
