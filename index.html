@@ -49,7 +49,8 @@ const WAVE_SPD=40;                  // 拾ったときの光の波が体を流�
 const BOMB_INT=10,BOMB_FUSE=5,BOMB_WARN=1.5; // 爆弾：10秒ごとに出現／5秒で爆発／最後の1.5秒は赤い予告エリア
 const BOMB_CENTER=0.25;   // 中央寄りに出る確率（ウェーブ5でこの値、ウェーブ0は0。ウェーブ数に比例）
 const BOMB_R=2,BOMB_R_WAVE=1;        // 爆発範囲：最初は中心から2マス（5×5）。ウェーブ（エリア拡大）ごとに1マス広がる（出現時に決まる）
-const BOMB_PTS=150;                 // 爆弾を壊したときの得点
+const BOMB_PTS=50,BOMB_DROPS=2,DROP_STAGGER=0.18;   // DROP_STAGGER：2つ目以降の白い枠が吸い寄せられ始めるまでの追加の待ち（秒）
+   // 爆弾を壊した瞬間に BOMB_PTS 点、白い枠を BOMB_DROPS 個はじき出す（取り込むと通常どおり1つ100点）                 // 爆弾を壊したときの得点
 const BOMB_HP=3;                    // 爆弾は自機の通常弾3発で壊せる（爆発しないで消える）
 const BOMB_FUSE_PER=0.12;           // 体1機ごとに爆発までの時間を延ばす(秒)。長い体でも抜けきれるように。予告エリアは導火線の3割（最低1.5秒）
 const BOMB_GAP=0.6;                 // 一度に複数出るとき、1個ずつずらす間隔(秒)。数はウェーブごとに+1
@@ -138,10 +139,10 @@ function addFollower(){
   kind[n-1]=got%TURRET_EVERY==0?'c':'w';   // 拾った数の5の倍数ごとに水色の追従機
   waves.push({t:0});checkExpand();
 }
-function gotFriend(){
-  score+=100;addFollower();
+function gotFriend(pts=100){
+  score+=pts;addFollower();
   const now=performance.now()/1000;streak=now-lastPick<1.5?streak+1:0;lastPick=now;   // 1.5秒以内に続けて拾うと音程が上がる
-  SE.pick(streak);pops.push({x:p.x,y:p.y,life:0.8});
+  SE.pick(streak);pops.push({x:p.x,y:p.y,life:0.8,v:pts});
   if(score>hi){hi=score;newHi=true;saveHi()}
 }
 function checkExpand(){if(!exp&&k<TH.length&&n>=TH[k]){exp={t:0,from:{...view},to:bounds(k+1)};k++;B=exp.to;SE.exp();launch();placeHoles()}}
@@ -316,13 +317,13 @@ function sub(dt){
   // 敵は自機の1マス手前でその場にピタッと止まる（押し戻しはしない）。自機がどけばまた進む
   enemies.forEach(e=>{let st=speed*dt;const onLine=e.dx?Math.round(e.y)==p.y:Math.round(e.x)==p.x,ahead=e.dx?(p.x-e.x)*e.dx:(p.y-e.y)*e.dy;
     if(onLine&&ahead>=0)st=Math.max(0,Math.min(st,ahead-1));
-    e.x+=e.dx*st;e.y+=e.dy*st;e.fl-=dt;if(e.kb){e.x=Math.max(B.x0+1,Math.min(B.x0+B.w-2,e.x+e.kb.vx*dt));e.y=Math.max(B.y0+1,Math.min(B.y0+B.h-2,e.y+e.kb.vy*dt));e.kb.t-=dt;if(e.kb.t<=0)e.kb=null}});cands.forEach(c=>{c.w=(c.w||0)+dt;if(c.w<MAG_WAIT)return;c.v=Math.min((c.v||0)+MAG_ACC*dt,MAG_MAX);const ddx=p.x-c.x,ddy=p.y-c.y,d=Math.hypot(ddx,ddy)||1,st=Math.min(c.v*dt,d);c.x+=ddx/d*st;c.y+=ddy/d*st});   // その場に少し残ってから、自機へ素早く吸い寄せられる
+    e.x+=e.dx*st;e.y+=e.dy*st;e.fl-=dt;if(e.kb){e.x=Math.max(B.x0+1,Math.min(B.x0+B.w-2,e.x+e.kb.vx*dt));e.y=Math.max(B.y0+1,Math.min(B.y0+B.h-2,e.y+e.kb.vy*dt));e.kb.t-=dt;if(e.kb.t<=0)e.kb=null}});cands.forEach(c=>{c.w=(c.w||0)+dt;if(c.ex){const f=Math.exp(-12*dt);c.x+=c.ex*(1-f)/12;c.y+=c.ey*(1-f)/12;c.ex*=f;c.ey*=f;if(Math.abs(c.ex)+Math.abs(c.ey)<0.05)c.ex=0}if(c.w<MAG_WAIT)return;c.v=Math.min((c.v||0)+MAG_ACC*dt,MAG_MAX);const ddx=p.x-c.x,ddy=p.y-c.y,d=Math.hypot(ddx,ddy)||1,st=Math.min(c.v*dt,d);c.x+=ddx/d*st;c.y+=ddy/d*st});   // その場に少し残ってから、自機へ素早く吸い寄せられる
   // 弾の判定
   bullets=bullets.filter(b=>{
     if(outside(b,1)||(b.life!==undefined&&b.life<=0))return false;   // 射程の切れた弾は消える
     if(!b.sp)for(let i=0;i<n;i++){const f=fpos(i);if(f&&Math.abs(f.x-b.x)<0.6&&Math.abs(f.y-b.y)<0.6)return false}   // 通常弾だけ体で止まる
     if(!b.sp)for(const bm of bombs){if(!bm.done&&Math.abs(bm.x-b.x)<0.6&&Math.abs(bm.y-b.y)<0.6){   // 自機の弾だけ爆弾を壊せる
-      bm.hp-=1;bm.fl=0.1;if(bm.hp<=0){bm.done=true;bm.defused=true;burst(bm.x,bm.y);score+=BOMB_PTS;if(score>hi){hi=score;newHi=true;saveHi()}pops.push({x:bm.x,y:bm.y,life:0.8,v:BOMB_PTS});tone(1200,0.12,'triangle',0.15,400);addShake(3);cands.push({x:bm.x,y:bm.y,dx:0,dy:0})}else tone(900,0.04,'square',0.06);return false}}
+      bm.hp-=1;bm.fl=0.1;if(bm.hp<=0){bm.done=true;bm.defused=true;burst(bm.x,bm.y);score+=BOMB_PTS;if(score>hi){hi=score;newHi=true;saveHi()}pops.push({x:bm.x,y:bm.y,life:0.8,v:BOMB_PTS});tone(1200,0.12,'triangle',0.15,400);addShake(3);{const a0=Math.random()*Math.PI*2;for(let i=0;i<BOMB_DROPS;i++){const a=a0+Math.PI*2*i/BOMB_DROPS+(Math.random()-0.5)*1.2,v=(1+Math.random()*0.7)*12;cands.push({x:bm.x,y:bm.y,dx:0,dy:0,ex:Math.cos(a)*v,ey:Math.sin(a)*v,w:-i*DROP_STAGGER})}}}else tone(900,0.04,'square',0.06);return false}}
     for(const e of enemies){if(Math.abs(e.x-b.x)<0.7&&Math.abs(e.y-b.y)<0.7){damage(e,b.dmg||1,b.x,b.y);return false}}
     return true});
   // 敵の判定
@@ -332,7 +333,7 @@ function sub(dt){
     for(let i=0;i<n;i++){const f=fpos(i);if(f&&f.x==ex&&f.y==ey){startChain(i,'体に敵がぶつかった！');return false}}
     return true});
   cands=cands.filter(c=>{
-    if(Math.hypot(c.x-p.x,c.y-p.y)<0.5){gotFriend();checkStuck();return false}
+    if(Math.hypot(c.x-p.x,c.y-p.y)<0.5){gotFriend(c.pts);checkStuck();return false}
     return true});
 }
 
